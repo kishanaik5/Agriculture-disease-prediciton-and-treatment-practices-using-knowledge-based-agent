@@ -1,52 +1,70 @@
-from contextlib import asynccontextmanager
-
-import sqlalchemy as db
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+from app.config import settings
+from app.routers.v1.scan import router as scan_router
+from SharedBackend.managers.base import BaseSchema
+from app.database import engine
+from sqlalchemy import text
+import asyncio
 
-from SharedBackend.managers import ApiKeyManager, BaseSchema, EntityManager
-from SharedBackend.middlewares import SDKMiddleware, EntityMiddleware
-from config import get_settings, get_engine
-from routers import admin_router, v1_router
+db_ready = False
 
-settings = get_settings()
-engine = get_engine(settings.name)
-
-
-@asynccontextmanager
-async def lifespan(_: FastAPI):
-    async with engine.begin() as conn:
-        if settings.supports_schema:
-            await conn.execute(db.text(f'CREATE SCHEMA IF NOT EXISTS "{settings.name}"'))
-        await conn.run_sync(BaseSchema.metadata.create_all)
-    yield
-
-
-app = FastAPI(lifespan=lifespan)
-app.include_router(admin_router, prefix="/admin")
-app.include_router(v1_router, prefix="/api/v1")
-
-app.add_middleware(
-    CORSMiddleware,  # type: ignore
-    allow_origins=settings.allowed_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+app = FastAPI(
+    title=settings.PROJECT_NAME,
+    openapi_url=f"{settings.API_V1_STR}/openapi.json"
 )
 
-api_key_manager = ApiKeyManager(engine)
-app.add_middleware(
-    SDKMiddleware,  # type: ignore
-    key_manager=api_key_manager,
-)
+async def wait_for_db(engine, max_retries: int = 10):
+    global db_ready
+    delay = 2  # seconds
 
-entity_manager = EntityManager(engine)
-app.add_middleware(
-    EntityMiddleware,  # type: ignore
-    entity_manager=entity_manager,
-)
+    for attempt in range(1, max_retries + 1):
+        try:
+            async with engine.begin() as conn:
+                await conn.run_sync(BaseSchema.metadata.create_all)
+            
+            # Verify connection explicitly
+            async with engine.connect() as conn:
+                await conn.execute(text("SELECT 1"))
+                
+            db_ready = True
+            print("✅ Database connected successfully")
+            return
+        except Exception as e:
+            print(f"⏳ DB not ready (attempt {attempt}/{max_retries}): {e}")
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, 30)  # exponential backoff
 
-if __name__ == '__main__':
-    import uvicorn
+    print("❌ Database failed to connect after retries")
 
-    uvicorn.run("app:app", host="localhost", port=8080, reload=True)
+# Create tables on startup (For MVP only - Use Alembic for Prod)
+@app.on_event("startup")
+async def startup():
+    asyncio.create_task(wait_for_db(engine))
+
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+
+app.include_router(scan_router, prefix=settings.API_V1_STR, tags=["scan"])
+
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+@app.get("/")
+async def read_index():
+    return FileResponse('static/index.html')
+
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy"}
+
+@app.get("/health/db")
+async def db_health():
+    if db_ready:
+        return {"db": "ok"}
+    
+    # Optional: try one active check if flag is false
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        return {"db": "ok"}
+    except Exception as e:
+        return {"db": "connecting", "detail": str(e) or repr(e)}

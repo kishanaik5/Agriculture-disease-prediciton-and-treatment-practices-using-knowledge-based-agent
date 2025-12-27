@@ -1,35 +1,31 @@
-FROM python:3.12-slim AS build
+# Use official lightweight Python image
+FROM python:3.12-slim
 
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    libpq-dev \
-    && rm -rf /var/lib/apt/lists/*
+# Set working directory
+WORKDIR /app
 
-WORKDIR /src
+# Prevent Python from writing pyc files and buffering stdout
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH="${PYTHONPATH}:/app/SharedBackend/src"
 
-RUN pip install --no-cache-dir --upgrade pip
-RUN pip install --no-cache-dir gunicorn
+# Install system dependencies (needed for psycopg2/asyncpg sometimes, but slim usually ok for wheels)
+# If reportlab needs fonts or libs, we might need:
+# RUN apt-get update && apt-get install -y libpq-dev gcc && rm -rf /var/lib/apt/lists/*
 
-COPY requirements/dev.txt requirements.txt
+# Copy requirements first to leverage caching
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY SharedBackend/requirements.txt requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
-RUN rm requirements.txt
 
-FROM python:3.12-slim AS runtime
+# Install SharedBackend dependencies
+COPY SharedBackend/requirements.txt ./requirements-shared.txt
+RUN pip install --no-cache-dir -r requirements-shared.txt
 
-WORKDIR /src
+# Copy the rest of the application
+COPY . .
 
-COPY --from=build /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
-COPY --from=build /usr/local/bin /usr/local/bin
-
-COPY --from=build /src /src
-COPY app app
-COPY SharedBackend SharedBackend
-COPY alembic.ini alembic.ini
-COPY migrations migrations
-ENV PYTHONPATH=/src/app/:/src/SharedBackend/src/
-
-
+# Expose the port
 EXPOSE 8000
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
+
+# Run the application
+CMD ["uvicorn", "app.app:app", "--host", "0.0.0.0", "--port", "8000"]

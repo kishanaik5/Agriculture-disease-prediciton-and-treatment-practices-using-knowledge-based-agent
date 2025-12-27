@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+sqlalchemy[asyncio]
+asyncpg
+google-generativeai
+boto3
+pydantic-settings
+pillow
+reportlab
+python-multipart
+tenacity
