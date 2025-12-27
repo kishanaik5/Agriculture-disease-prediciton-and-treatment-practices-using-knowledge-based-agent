@@ -9,3 +9,4 @@ pillow
 reportlab
 python-multipart
 tenacity
+alembic

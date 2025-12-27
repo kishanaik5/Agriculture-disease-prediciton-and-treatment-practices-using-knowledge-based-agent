@@ -2,9 +2,11 @@ from sqlalchemy import Column, String, Boolean, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.sql import func
 from SharedBackend.managers.base import BaseSchema
+from app.config import settings
 
 class AnalysisReport(BaseSchema):
-    __tablename__ = "analysis_reports"
+    __tablename__ = "crop_analysis_report"
+    __table_args__ = {'schema': settings.DB_SCHEMA}
     
     # BaseSchema provides: uid (str), created_at, updated_at, deleted_at
     

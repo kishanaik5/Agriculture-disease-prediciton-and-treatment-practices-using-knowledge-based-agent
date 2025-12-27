@@ -1,7 +1,7 @@
 import sys
 from pathlib import Path
 
-sys.path.append(str(Path(__file__).parents[1] / "app"))
+sys.path.append(str(Path(__file__).parents[1]))
 sys.path.append(str(Path(__file__).parents[1] / "SharedBackend" / "src"))
 
 from logging.config import fileConfig
@@ -11,19 +11,18 @@ from sqlalchemy import pool
 
 from alembic import context
 
-from managers import *  # noqa
 from SharedBackend.managers import BaseSchema
-from config import get_settings
+from app.config import settings
+from app.models.scan import AnalysisReport  # Import models to register them
 
 config = context.config
-settings = get_settings()
 
 if config.config_file_name is not None: fileConfig(config.config_file_name)
 
 # for 'autogenerate' support
 target_metadata = BaseSchema.metadata
 
-config.set_main_option("sqlalchemy.url", settings.engine_str.replace("+aiosqlite", "").replace("+asyncpg", ""))
+config.set_main_option("sqlalchemy.url", settings.SQLALCHEMY_DATABASE_URI.replace("+asyncpg", ""))
 
 
 def run_migrations_offline() -> None:

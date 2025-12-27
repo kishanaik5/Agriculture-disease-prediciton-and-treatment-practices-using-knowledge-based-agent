@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     POSTGRES_DB: str
     POSTGRES_PORT: int = 5432
     DATABASE_URL: Optional[str] = None
+    DB_SCHEMA: str = "kissan_cv"  # Dedicated schema for this service
 
     @property
     def SQLALCHEMY_DATABASE_URI(self) -> str:

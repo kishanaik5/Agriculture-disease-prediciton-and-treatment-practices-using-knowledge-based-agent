@@ -19,10 +19,11 @@ async def wait_for_db(engine, max_retries: int = 10):
 
     for attempt in range(1, max_retries + 1):
         try:
-            async with engine.begin() as conn:
-                await conn.run_sync(BaseSchema.metadata.create_all)
+            # Skip table creation - tables should exist via migrations
+            # async with engine.begin() as conn:
+            #     await conn.run_sync(BaseSchema.metadata.create_all)
             
-            # Verify connection explicitly
+            # Just verify connection
             async with engine.connect() as conn:
                 await conn.execute(text("SELECT 1"))
                 
@@ -36,7 +37,7 @@ async def wait_for_db(engine, max_retries: int = 10):
 
     print("❌ Database failed to connect after retries")
 
-# Create tables on startup (For MVP only - Use Alembic for Prod)
+# Verify DB connection on startup (tables should be created via Alembic migrations)
 @app.on_event("startup")
 async def startup():
     asyncio.create_task(wait_for_db(engine))
