@@ -41,3 +41,11 @@ bb_images/
 dev/
 s3=*_accessKeys.csv
 static/
+
+# Temporary/Archive Files
+*.zip
+
+# Test and Migration Scripts (not needed in repo)
+test_db_connection.py
+run_migration.py
+run_alembic.py
