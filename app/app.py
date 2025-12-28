@@ -44,14 +44,21 @@ async def startup():
 
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+import os
 
 app.include_router(scan_router, prefix=settings.API_V1_STR, tags=["scan"])
 
-app.mount("/static", StaticFiles(directory="static"), name="static")
+# Only mount static files if directory exists
+if os.path.isdir("static"):
+    app.mount("/static", StaticFiles(directory="static"), name="static")
 
-@app.get("/")
-async def read_index():
-    return FileResponse('static/index.html')
+    @app.get("/")
+    async def read_index():
+        return FileResponse('static/index.html')
+else:
+    @app.get("/")
+    async def read_index():
+        return {"message": "CV Service API is running"}
 
 @app.get("/health")
 async def health_check():
