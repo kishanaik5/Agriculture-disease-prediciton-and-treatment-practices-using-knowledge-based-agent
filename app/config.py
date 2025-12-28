@@ -49,8 +49,8 @@ class Settings(BaseSettings):
     GEMINI_MODEL_BBOX: str = "gemini-3-pro-preview"
 
     # AWS S3 Configuration
-    AWS_ACCESS_KEY_ID: str
-    AWS_SECRET_ACCESS_KEY: str
+    AWS_ACCESS_KEY_ID: Optional[str] = None
+    AWS_SECRET_ACCESS_KEY: Optional[str] = None
     AWS_REGION: str = "ap-south-1"
     S3_BUCKET_PRIVATE: str
     S3_BUCKET_PUBLIC: str
@@ -58,7 +58,7 @@ class Settings(BaseSettings):
     # Application Configuration
     ENV_MODE: str = "dev"
 
-    @field_validator('GEMINI_API_KEY', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY')
+    @field_validator('GEMINI_API_KEY')
     @classmethod
     def validate_credentials(cls, v: str) -> str:
         """Ensure credentials are not empty"""
