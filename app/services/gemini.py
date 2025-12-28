@@ -1,4 +1,5 @@
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from app.config import settings
 import json
 import logging
@@ -8,24 +9,22 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Make sure your API key is configured here or in your settings
-genai.configure(api_key=settings.GEMINI_API_KEY)
-
 class GeminiService:
     def __init__(self):
-        # Ensure these settings point to the correct models (e.g., gemini-2.0-flash-exp for bbox_model)
-        self.flash_model = genai.GenerativeModel(settings.GEMINI_MODEL_FLASH)
-        self.pro_model = genai.GenerativeModel(settings.GEMINI_MODEL_PRO)
-        # Final Fix: Anchor behavior with System Instruction
-        self.bbox_model = genai.GenerativeModel(
-            model_name=settings.GEMINI_MODEL_BBOX,
-            system_instruction="You are a precise scientific annotator. You never group objects; you identify every individual instance separately using [ymin, xmin, ymax, xmax]."
-        )
+        # Initialize the new GenAI Client
+        self.client = genai.Client(api_key=settings.GEMINI_API_KEY)
+        
+        # Models configuration
+        self.flash_model = settings.GEMINI_MODEL_FLASH
+        self.pro_model = settings.GEMINI_MODEL_PRO
+        self.bbox_model_name = settings.GEMINI_MODEL_BBOX
+        
+        # System instruction for BBox model
+        self.bbox_instruction = "You are a precise scientific annotator. You never group objects; you identify every individual instance separately using [ymin, xmin, ymax, xmax]."
 
     async def analyze_image(self, image_data: bytes, crop_name: str, language: str = "en", mime_type: str = "image/jpeg") -> dict:
         """
         Analyzes the crop image using Gemini Flash with 5 retries, falling back to Pro on failure.
-        This method remains unchanged.
         """
         
         lang_instruction = "Respond entirely in KANNADA." if language.lower() in ['kn', 'kannada'] else "Respond in ENGLISH."
@@ -81,15 +80,23 @@ class GeminiService:
 
         # Retry logic for Flash: 5 attempts
         max_retries = 5
-        flash_response = None
+        
+        # Prepare content part (image)
+        content_part = types.Part.from_bytes(data=image_data, mime_type=mime_type)
+        
+        # Config for JSON response
+        json_config = types.GenerateContentConfig(response_mime_type="application/json")
         
         for attempt in range(max_retries):
             try:
-                logger.info(f"Attempt {attempt + 1}/{max_retries} with Gemini Flash...")
-                flash_response = await self.flash_model.generate_content_async(
-                    [prompt, {"mime_type": mime_type, "data": image_data}],
-                    generation_config={"response_mime_type": "application/json"}
+                logger.info(f"Attempt {attempt + 1}/{max_retries} with Gemini Flash ({self.flash_model})...")
+                
+                flash_response = await self.client.aio.models.generate_content(
+                    model=self.flash_model,
+                    contents=[prompt, content_part],
+                    config=json_config
                 )
+
                 if flash_response.text:
                     try:
                         return json.loads(flash_response.text)
@@ -102,11 +109,12 @@ class GeminiService:
                     await asyncio.sleep(1 * (attempt + 1)) # Simple backoff
         
         # Fallback to Pro
-        logger.warning("All Flash attempts failed. Switching to Gemini Pro...")
+        logger.warning(f"All Flash attempts failed. Switching to Gemini Pro ({self.pro_model})...")
         try:
-            pro_response = await self.pro_model.generate_content_async(
-                [prompt, {"mime_type": mime_type, "data": image_data}],
-                generation_config={"response_mime_type": "application/json"}
+            pro_response = await self.client.aio.models.generate_content(
+                model=self.pro_model,
+                contents=[prompt, content_part],
+                config=json_config
             )
             return json.loads(pro_response.text)
         except Exception as e2:
@@ -114,7 +122,7 @@ class GeminiService:
             raise e2
 
     async def generate_bounding_boxes(self, image_data: bytes, disease_name: str, mime_type: str = "image/jpeg") -> list:
-        target = disease_name if disease_name and disease_name.lower() not in ["No visible disease","healthy", "none", "n/a"] else "necrotic lesions"
+        target = disease_name if disease_name and disease_name.lower() not in ["no visible disease","healthy", "none", "n/a"] else "necrotic lesions"
 
         # --- ATOMIC DETECTION PROMPT ---
         prompt = f"""
@@ -132,14 +140,19 @@ class GeminiService:
         [OUTPUT] JSON only: {{"lesions": [{{"box_2d": [ymin, xmin, ymax, xmax]}}]}} 
         """
         
+        # Prepare content part (image)
+        content_part = types.Part.from_bytes(data=image_data, mime_type=mime_type)
+        
         try:
-            response = await self.bbox_model.generate_content_async(
-                [prompt, {"mime_type": mime_type, "data": image_data}],
-                generation_config={
-                    "response_mime_type": "application/json",
-                    "temperature": 0.0, 
-                    "max_output_tokens": 30000
-                }
+            response = await self.client.aio.models.generate_content(
+                model=self.bbox_model_name,
+                contents=[prompt, content_part],
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    temperature=0.0,
+                    max_output_tokens=30000,
+                    system_instruction=self.bbox_instruction
+                )
             )
             
             # --- CRITICAL FOR AUTOMATION: LOG THE RAW RESPONSE ---

@@ -31,6 +31,8 @@ ENV/
 
 # MacOS
 .DS_Store
+._*
+**/*._*
 
 # IDEs
 .vscode/
@@ -49,3 +51,4 @@ static/
 test_db_connection.py
 run_migration.py
 run_alembic.py
+log-events-viewer-result (2).csv
