@@ -1,5 +1,25 @@
+import sys
+import os
+from pathlib import Path
+
+# Robustly set up PYTHONPATH to include SharedBackend
+# This ensures it works in Docker, Local, and custom Deployments
+try:
+    current_dir = Path(__file__).resolve().parent.parent # /app
+    shared_backend_src = current_dir / "SharedBackend" / "src"
+    
+    if shared_backend_src.exists():
+        sys.path.insert(0, str(shared_backend_src))
+        print(f"✅ Added {shared_backend_src} to sys.path")
+    else:
+        print(f"⚠️  SharedBackend path not found at: {shared_backend_src}")
+except Exception as e:
+    print(f"⚠️  Error setting up path: {e}")
+
 from fastapi import FastAPI
-from app.config import settings
+from app.config import init_settings
+
+settings = init_settings()
 from app.routers.v1.scan import router as scan_router
 from SharedBackend.managers.base import BaseSchema
 from app.database import engine

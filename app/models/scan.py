@@ -2,7 +2,9 @@ from sqlalchemy import Column, String, Boolean, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.sql import func
 from SharedBackend.managers.base import BaseSchema
-from app.config import settings
+from app.config import init_settings
+
+settings = init_settings()
 
 class AnalysisReport(BaseSchema):
     __tablename__ = "crop_analysis_report"
