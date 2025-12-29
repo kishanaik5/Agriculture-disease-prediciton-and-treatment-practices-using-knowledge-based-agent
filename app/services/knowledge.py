@@ -19,6 +19,10 @@ class KnowledgeService:
         self._load_data(self.csv_path_en, 'en')
         self._load_data(self.csv_path_kn, 'kn')
 
+        # Load Icons dynamically from folders
+        self.crop_items = []
+        self._load_all_icons("icons_folder")
+
     def _resolve_path(self, path: str) -> str:
         if not os.path.exists(path):
              project_root = os.getcwd() 
@@ -126,7 +130,83 @@ class KnowledgeService:
             if name:
                 crops.add(name)
         
-        return sorted(list(crops))
+    def _load_all_icons(self, root_folder: str):
+        """
+        Scan subfolders of root_folder.
+        Category = Subfolder Name (e.g. 'fruits' -> 'Fruits')
+        Load all CSVs in that subfolder.
+        """
+        resolved_root = self._resolve_path(root_folder)
+        if not os.path.exists(resolved_root):
+            logger.warning(f"Icons root folder not found: {resolved_root}")
+            return
+
+        # Iterate over subdirectories in icons_folder
+        # e.g. crops, fruits, vegetables
+        for item in os.listdir(resolved_root):
+            category_path = os.path.join(resolved_root, item)
+            
+            if os.path.isdir(category_path):
+                # Category Name (capitalize)
+                category_name = item.title() # "crops" -> "Crops"
+                
+                # Special handling if user wants singular/plural mapping?
+                # User's example: "crops/fruits/vegetable"
+                # If folder is "vegetables", title() gives "Vegetables". 
+                # User used "vegetable" (singular). Let's stick to title case of folder for now unless mapped.
+                if item.lower() == "vegetables":
+                    category_name = "Vegetable" # Matching user's sample output style
+                
+                # Find CSV files in this category folder
+                for file_name in os.listdir(category_path):
+                    if file_name.endswith(".csv"):
+                        self._process_icon_csv(os.path.join(category_path, file_name), category_name)
+
+    def _process_icon_csv(self, csv_path: str, category: str):
+        try:
+            with open(csv_path, mode='r') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    raw_name = row.get("crop_name", "").lower().replace("_crop", "")
+                    url = row.get("url", "")
+                    kannada_name = row.get("kannada_name", "")
+                    
+                    if raw_name:
+                        # Format Name: "green_chilli" -> "Green Chilli"
+                        if raw_name == "ladies_finger":
+                            display_name = "Ladies Finger (Okra)"
+                        elif raw_name == "pepper_belly":
+                            display_name = "Pepper Bell"
+                        else:
+                            display_name = raw_name.replace("_", " ").title()
+                        
+                        self.crop_items.append({
+                            "Name": display_name,
+                            "kannada_name": kannada_name,
+                            "image": url,
+                            "category": category
+                        })
+        except Exception as e:
+            logger.error(f"Failed to load icons csv {csv_path}: {e}")
+
+    def get_crops_with_icons(self, language: str = 'en') -> List[Dict[str, str]]:
+        """
+        Return list of crops with Name, image, category
+        """
+        result = []
+        for item in self.crop_items:
+            # Select name based on language
+            name = item["kannada_name"] if language == 'kn' and item.get("kannada_name") else item["Name"]
+            
+            result.append({
+                "Name": name,
+                "image": item["image"],
+                "category": item["category"]
+            })
+            
+        # Sort by Name
+        result.sort(key=lambda x: x["Name"])
+        return result
 
 # Global Instance
 knowledge_service = KnowledgeService()

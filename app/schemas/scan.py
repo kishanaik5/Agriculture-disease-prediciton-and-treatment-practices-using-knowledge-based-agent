@@ -28,6 +28,11 @@ class AnalysisResult(BaseModel):
 
 # --- API Response ---
 
+class CropItem(BaseModel):
+    Name: str
+    image: str
+    category: str
+
 class ScanResponse(BaseModel):
     id: str # Serial ID / UUID
     user_id: str

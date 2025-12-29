@@ -2,7 +2,7 @@ from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException, B
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.scan import AnalysisReport
-from app.schemas.scan import ScanResponse, AnalysisResult
+from app.schemas.scan import ScanResponse, AnalysisResult, CropItem
 from app.services.gemini import gemini_service
 from app.services.s3 import s3_service_public, s3_service_private
 from app.services.image import image_service
@@ -28,12 +28,12 @@ class BytesUploadFile:
 
 router = APIRouter()
 
-@router.get("/crops", response_model=list[str])
+@router.get("/crops", response_model=list[CropItem])
 async def get_crops(language: str = "en"):
     """
-    Get list of supported crops from Knowledge Base.
+    Get list of supported crops with icons and categories.
     """
-    return knowledge_service.get_unique_crops(language=language)
+    return knowledge_service.get_crops_with_icons(language=language)
 
 
 
