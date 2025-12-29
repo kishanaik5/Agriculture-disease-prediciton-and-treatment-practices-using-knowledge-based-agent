@@ -44,9 +44,9 @@ class Settings(BaseSettings):
 
     # Gemini AI Configuration
     GEMINI_API_KEY: str
-    GEMINI_MODEL_FLASH: str = "gemini-2.5-flash"
-    GEMINI_MODEL_PRO: str = "gemini-2.5-pro"
-    GEMINI_MODEL_BBOX: str = "gemini-3-pro-preview"
+    GEMINI_MODEL_FLASH: str = "gemini-2.0-flash-exp"
+    GEMINI_MODEL_PRO: str = "gemini-1.5-pro"
+    GEMINI_MODEL_BBOX: str = "gemini-2.0-flash-exp"  # Alternative: try gemini-1.5-pro if bbox fails
 
     # AWS S3 Configuration
     AWS_ACCESS_KEY_ID: Optional[str] = None
@@ -54,6 +54,9 @@ class Settings(BaseSettings):
     AWS_REGION: str = "ap-south-1"
     S3_BUCKET_PRIVATE: str
     S3_BUCKET_PUBLIC: str
+    
+    # Redis Configuration for Async Tasks
+    REDIS_URL: str = "redis://localhost:6379"
     
     # Application Configuration
     ENV_MODE: str = "dev"

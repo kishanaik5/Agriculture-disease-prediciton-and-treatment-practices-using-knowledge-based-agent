@@ -21,6 +21,8 @@ from app.config import init_settings
 
 settings = init_settings()
 from app.routers.v1.scan import router as scan_router
+from app.routers.v1.async_scan import router as async_scan_router
+from app.services.redis_manager import task_manager
 from SharedBackend.managers.base import BaseSchema
 from app.database import engine
 from sqlalchemy import text
@@ -61,12 +63,20 @@ async def wait_for_db(engine, max_retries: int = 10):
 @app.on_event("startup")
 async def startup():
     asyncio.create_task(wait_for_db(engine))
+    # Initialize Redis connection
+    await task_manager.connect()
+
+@app.on_event("shutdown")
+async def shutdown():
+    # Clean up Redis connection
+    await task_manager.close()
 
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import os
 
 app.include_router(scan_router, prefix=settings.API_V1_STR, tags=["scan"])
+app.include_router(async_scan_router, prefix=settings.API_V1_STR, tags=["scan-async"])
 
 # Only mount static files if directory exists
 if os.path.isdir("static"):

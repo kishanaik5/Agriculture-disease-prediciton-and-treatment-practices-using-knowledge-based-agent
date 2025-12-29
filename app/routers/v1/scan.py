@@ -91,7 +91,9 @@ async def analyze_crop(
     try:
         # Wrap bytes for the new S3Service which expects an UploadFile-like object
         file_wrapper = BytesUploadFile(image_bytes, file.filename, file.content_type)
-        original_url = await s3_service_private.upload_file(file=file_wrapper, prefix="original/")
+        # CHANGED: Use Public Bucket for original images as per new requirement
+        # Path: dev/original/{filename}
+        original_url = await s3_service_public.upload_file(file=file_wrapper, prefix="dev/original/")
     except Exception as e:
         logger.error(f"S3 Upload failed but analysis valid. Proceeding. Error: {e}")
         original_url = None
@@ -122,9 +124,11 @@ async def analyze_crop(
     # Bounding Box Logic (Only if NOT healthy)
     if not is_healthy and disease_name:
         try:
+            logger.info(f"🎯 Generating bounding boxes for disease: {disease_name}")
             boxes = await gemini_service.generate_bounding_boxes(image_bytes, disease_name, mime_type=file.content_type)
             
             if boxes:
+                logger.info(f"✅ Generated {len(boxes)} bounding boxes")
                 # Draw boxes
                 processed_image_bytes = image_service.draw_bounding_boxes(image_bytes, boxes)
                 
@@ -137,15 +141,18 @@ async def analyze_crop(
                 with open(local_path, "wb") as f:
                     f.write(processed_image_bytes)
                 
-                logger.info(f"Saved processed image to {local_path}")
+                logger.info(f"💾 Saved processed image to {local_path}")
                 
-                # Upload to S3 Public
+                # Upload to S3 Public (using dev/processed/ prefix)
                 processed_wrapper = BytesUploadFile(processed_image_bytes, f"processed_{file.filename}", "image/jpeg")
-                processed_url = await s3_service_public.upload_file(file=processed_wrapper, prefix="processed/")
+                processed_url = await s3_service_public.upload_file(file=processed_wrapper, prefix="dev/processed/")
+                logger.info(f"☁️ Uploaded bbox image to S3: {processed_url}")
+            else:
+                logger.warning(f"⚠️ No bounding boxes generated for {disease_name}. Model returned empty list.")
                 
         except Exception as e:
-            logger.error(f"Bounding Box stage failed: {e}")
-            # Non-blocking error
+            logger.error(f"❌ Bounding Box stage failed: {e}", exc_info=True)
+            # Non-blocking error - continue without bbox
 
     # 5. Save to DB (Only if NOT healthy)
     current_time = datetime.now()

@@ -7,8 +7,8 @@ logger = logging.getLogger(__name__)
 
 class KnowledgeService:
     def __init__(self, 
-                 csv_path_en: str = "knowledge_based_folder/Knowledge Based Data For Agent - Crop_knowledge_database.csv",
-                 csv_path_kn: str = "knowledge_based_folder/Knowledge data in kannada - Kannada_Translated_Crop_Knowledge_Database.csv"):
+                 csv_path_en: str = "knowledge_based_folder/crop_kb_data/Crop_kb_data_en.csv",
+                 csv_path_kn: str = "knowledge_based_folder/crop_kb_data/Crop_kb_data_kn.csv"):
         
         self.csv_path_en = self._resolve_path(csv_path_en)
         self.csv_path_kn = self._resolve_path(csv_path_kn)
