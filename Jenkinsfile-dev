@@ -1,0 +1,189 @@
+pipeline {
+    agent any
+
+    environment {
+        AWS_REGION = 'ap-south-1'
+        ECR_REPOSITORY = '400115659362.dkr.ecr.ap-south-1.amazonaws.com/kissan-cv-dev'
+        ECS_CLUSTER = 'KissanSampurna-dev'
+        ECS_TASK_DEFINITION_FAMILY = 'kissan-cv-dev'
+        ECS_SERVICE = 'kissan-cv-dev'
+        IMAGE_TAG = UUID.randomUUID().toString().replace('-', '')
+        CPU = "256"
+        MEMORY = "512"
+    }
+
+    stages {
+        stage('Update Git Submodule URLs') {
+            steps {
+                sshagent(['GitHub-Rohit-SiloFortune-Secret']) {
+                    script {
+                        sh '''#!/bin/bash
+                            # Check if .gitmodules exists
+                            if [ ! -f .gitmodules ]; then
+                                echo "No .gitmodules file found. Exiting."
+                                exit 1
+                            fi
+
+                            # Update submodule URLs to use SSH
+                            sed -i 's|https://github.com/|git@github.com:|g' .gitmodules
+
+                            # Sync and initialize submodules
+                            git submodule sync
+                            git submodule update --init --recursive
+
+                            echo "Submodule URLs converted to SSH successfully!"
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    docker.build("${ECR_REPOSITORY}:${IMAGE_TAG}")
+                }
+            }
+        }
+
+        stage('Login to ECR') {
+            steps {
+                script {
+                    sh '''#!/bin/bash
+                        aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REPOSITORY}
+                    '''
+                }
+            }
+        }
+
+        stage('Push Docker Image to ECR') {
+            steps {
+                script {
+                    sh '''
+                        docker push ${ECR_REPOSITORY}:${IMAGE_TAG}
+                    '''
+                }
+            }
+        }
+
+        stage('Prepare ECS Task Definition') {
+            steps {
+                script {
+                    sh '''
+                        # Replace dynamic placeholders in the JSON file
+                        sed -i "s|<IMAGE_TAG>|${IMAGE_TAG}|g" ${ECS_TASK_DEFINITION_FAMILY}.json
+                        sed -i "s|<ECR_REPOSITORY>|${ECR_REPOSITORY}|g" ${ECS_TASK_DEFINITION_FAMILY}.json
+                        sed -i "s|<CPU>|${CPU}|g" ${ECS_TASK_DEFINITION_FAMILY}.json
+                        sed -i "s|<MEMORY>|${MEMORY}|g" ${ECS_TASK_DEFINITION_FAMILY}.json
+                    '''
+                }
+            }
+        }
+
+        stage('Register New ECS Task Definition') {
+            steps {
+                script {
+                    def output = sh(script: '''
+                        aws ecs register-task-definition --cli-input-json "$(cat ${ECS_TASK_DEFINITION_FAMILY}.json)" --query "taskDefinition.taskDefinitionArn" --output text
+                    ''', returnStdout: true).trim()
+                    env.NEW_TASK_DEFINITION_ARN = output
+                }
+            }
+        }
+
+        stage('Run Database Migrations') {
+            steps {
+                script {
+                    echo "Starting Database Migration..."
+                    sh '''
+                        # 1. Get Network Config from existing Service (to reuse Subnets/SG)
+                        NET_CONFIG=$(aws ecs describe-services --cluster ${ECS_CLUSTER} --services ${ECS_SERVICE} --query "services[0].networkConfiguration" --output json)
+                        
+                        # 2. Run One-off Migration Task
+                        # Override command to run alembic
+                        TASK_ARN=$(aws ecs run-task \
+                            --cluster ${ECS_CLUSTER} \
+                            --task-definition ${NEW_TASK_DEFINITION_ARN} \
+                            --launch-type FARGATE \
+                            --network-configuration "$NET_CONFIG" \
+                            --overrides '{"containerOverrides":[{"name":"kissan-cv","command":["alembic","upgrade","head"]}]}' \
+                            --query "tasks[0].taskArn" \
+                            --output text)
+                        
+                        echo "Migration Task Started: $TASK_ARN"
+                        
+                        # 3. Wait for Task to Complete
+                        aws ecs wait tasks-stopped --cluster ${ECS_CLUSTER} --tasks $TASK_ARN
+                        
+                        # 4. Check Exit Code
+                        EXIT_CODE=$(aws ecs describe-tasks --cluster ${ECS_CLUSTER} --tasks $TASK_ARN --query "tasks[0].containers[0].exitCode" --output text)
+                        
+                        if [ "$EXIT_CODE" != "0" ]; then
+                            echo "Error: Database Migration Failed with Exit Code: $EXIT_CODE"
+                            exit 1
+                        fi
+                        
+                        echo "Database Migration Completed Successfully."
+                    '''
+                }
+            }
+        }
+
+        stage('Update ECS Service') {
+            steps {
+                script {
+                    sh '''
+                        aws ecs update-service --cluster ${ECS_CLUSTER} --service ${ECS_SERVICE} --task-definition ${NEW_TASK_DEFINITION_ARN} --force-new-deployment
+                    '''
+                }
+            }
+        }
+
+        stage('Deploying to ECS') {
+            steps {
+                script {
+                    timeout(time: 10, unit: 'MINUTES') {
+                        def deploymentSucceeded = false
+                        while (!deploymentSucceeded) {
+                            def deploymentInfo = sh(script: '''
+                                aws ecs describe-services --cluster ${ECS_CLUSTER} --services ${ECS_SERVICE} --query "services[0].deployments[?status=='PRIMARY']" --output json
+                            ''', returnStdout: true).trim()
+
+                            def deployment = readJSON text: deploymentInfo
+                            def failedTasks = deployment[0]?.failedTasks ?: 0
+                            def rolloutState = deployment[0]?.rolloutState ?: ""
+
+                            if (failedTasks >= 1) {
+                                error("Deployment failed")
+                            } else if (rolloutState == 'COMPLETED') {
+                                deploymentSucceeded = true
+                                echo "Deployment completed successfully."
+                            } else if (rolloutState == 'FAILED' || rolloutState == 'ROLLED_BACK') {
+                                error("Deployment failed or was rolled back.")
+                            } else {
+                                echo "Deployment in progress... Status: ${rolloutState}"
+                                echo "Deployment Information ${deployment}"
+                                sleep(10)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            script {
+                echo "Running cleanup stage."
+
+                def imageExists = sh(script: "docker images -q ${ECR_REPOSITORY}:${IMAGE_TAG}", returnStdout: true).trim()
+                if (imageExists) {
+                    sh "docker rmi ${ECR_REPOSITORY}:${IMAGE_TAG} || true"
+                } else {
+                    echo "Docker image ${ECR_REPOSITORY}:${IMAGE_TAG} not found, skipping removal."
+                }
+            }
+        }
+    }
+}
