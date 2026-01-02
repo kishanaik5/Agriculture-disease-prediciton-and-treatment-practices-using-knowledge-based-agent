@@ -17,6 +17,7 @@ except Exception as e:
     print(f"⚠️  Error setting up path: {e}")
 
 from fastapi import FastAPI
+from fastapi.responses import Response
 from app.config import init_settings
 
 settings = init_settings()
@@ -35,6 +36,11 @@ app = FastAPI(
     openapi_url=f"{settings.API_V1_STR}/openapi.json"
 )
 
+# Silence favicon 404s
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return Response(content=b"", media_type="image/x-icon")
+
 async def wait_for_db(engine, max_retries: int = 10):
     global db_ready
     delay = 2  # seconds
@@ -48,61 +54,62 @@ async def wait_for_db(engine, max_retries: int = 10):
             # Just verify connection
             async with engine.connect() as conn:
                 await conn.execute(text("SELECT 1"))
-                
+            
+            print("✅ Database connection successful and tables verified.")
             db_ready = True
-            print("✅ Database connected successfully")
-            return
+            return True
+            
+        except OSError as e:
+            # Handle specifically "Can't assign requested address" or other OS-level connect errors
+            print(f"⚠️ Database unavailable (Attempt {attempt}/{max_retries}): {e}")
         except Exception as e:
-            print(f"⏳ DB not ready (attempt {attempt}/{max_retries}): {e}")
+            print(f"⚠️ Database unavailable (Attempt {attempt}/{max_retries}): {e}")
+            
+        if attempt < max_retries:
             await asyncio.sleep(delay)
-            delay = min(delay * 2, 30)  # exponential backoff
+            # Exponential backoff optional, but linear 2s is usually fine for startup
+    
+    print("❌ Could not connect to database after multiple retries.")
+    return False
 
-    print("❌ Database failed to connect after retries")
 
-# Verify DB connection on startup (tables should be created via Alembic migrations)
 @app.on_event("startup")
-async def startup():
-    asyncio.create_task(wait_for_db(engine))
-    # Initialize Redis connection
-    await task_manager.connect()
+async def startup_event():
+    global db_ready
+    print(f"🚀 Starting up {settings.PROJECT_NAME}...")
+    
+    # 1. Initialize Redis (Disabled by user request)
+    # try:
+    #     if await task_manager.connect():
+    #         print("✅ Redis connection successful")
+    #     else:
+    #         print("⚠️ Redis connection failed - async features may be limited")
+    # except Exception as e:
+    #     print(f"⚠️ Redis init failed: {e}")
 
-@app.on_event("shutdown")
-async def shutdown():
-    # Clean up Redis connection
-    await task_manager.close()
+    # 2. Add DB wait check
+    is_connected = await wait_for_db(engine)
+    if not is_connected:
+        print("⚠️ Application starting without DB connection - some features will fail")
 
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
-import os
-
-app.include_router(scan_router, prefix=settings.API_V1_STR, tags=["scan"])
-app.include_router(async_scan_router, prefix=settings.API_V1_STR, tags=["scan-async"])
-
-# Only mount static files if directory exists
-if os.path.isdir("static"):
-    app.mount("/static", StaticFiles(directory="static"), name="static")
-
-    @app.get("/")
-    async def read_index():
-        return FileResponse('static/index.html')
-else:
-    @app.get("/")
-    async def read_index():
-        return {"message": "CV Service API is running"}
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy"}
-
-@app.get("/health/db")
-async def db_health():
-    if db_ready:
-        return {"db": "ok"}
+    health_status = {
+        "status": "healthy", 
+        "database": "connected" if db_ready else "disconnected",
+        "redis": "connected" if task_manager.redis else "disconnected"
+    }
     
-    # Optional: try one active check if flag is false
-    try:
-        async with engine.connect() as conn:
-            await conn.execute(text("SELECT 1"))
-        return {"db": "ok"}
-    except Exception as e:
-        return {"db": "connecting", "detail": str(e) or repr(e)}
+    if not db_ready:
+        health_status["status"] = "degraded"
+        # Return 503 if DB is critical, or 200 with degraded status?
+        # Usually health checks should reflect 'can serve traffic'. 
+        # If DB is down, maybe 503 is better. 
+        # But for strictly "app is running", 200 is okay.
+        
+    return health_status
+
+# Include Routers
+app.include_router(scan_router, prefix=settings.API_V1_STR, tags=["Scan"])
+app.include_router(async_scan_router, prefix=settings.API_V1_STR, tags=["Async Scan"])

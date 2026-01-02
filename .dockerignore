@@ -168,3 +168,8 @@ cython_debug/
 # --- custom ---
 ._*
 .DS_Store
+
+# macOS metadata
+._*
+**/._*
+.DS_Store

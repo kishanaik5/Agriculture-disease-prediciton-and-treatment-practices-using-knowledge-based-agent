@@ -46,7 +46,14 @@ async def process_crop_scan_async(
         await task_manager.set_task_status(task_id, "processing", {"progress": 10})
         
         # 1. Analyze Image
-        analysis_dict = await gemini_service.analyze_image(image_bytes, crop_name, language=language, mime_type=content_type)
+        category = knowledge_service.get_crop_category(crop_name)
+        is_produce = category in ["Fruits", "Vegetable"]
+        
+        if is_produce:
+            analysis_dict = await gemini_service.analyze_vegetable(image_bytes, crop_name, language=language, mime_type=content_type)
+        else:
+            analysis_dict = await gemini_service.analyze_crop(image_bytes, crop_name, language=language, mime_type=content_type)
+            
         await task_manager.set_task_status(task_id, "processing", {"progress": 30})
         
         # 2. Validation
@@ -93,7 +100,10 @@ async def process_crop_scan_async(
         if not is_healthy and disease_name:
             await task_manager.set_task_status(task_id, "processing", {"progress": 70})
             
-            boxes = await gemini_service.generate_bounding_boxes(image_bytes, disease_name, mime_type=content_type)
+            if is_produce:
+                boxes = await gemini_service.generate_bbox_vegetable(image_bytes, disease_name, mime_type=content_type)
+            else:
+                boxes = await gemini_service.generate_bbox_crop(image_bytes, disease_name, mime_type=content_type)
             
             if boxes:
                 processed_image_bytes = image_service.draw_bounding_boxes(image_bytes, boxes)
@@ -118,7 +128,6 @@ async def process_crop_scan_async(
             "created_at": current_time,
             "original_image_url": original_url,
             "bbox_image_url": processed_url,
-            "report_url": None,
             "disease_detected": disease_name,
             "user_input_crop": crop_name,
             "language": language,
@@ -141,8 +150,7 @@ async def process_crop_scan_async(
                 analysis_raw=analysis_dict,
                 created_at=current_time,
                 original_image_url=original_url,
-                bbox_image_url=processed_url,
-                report_url=None
+                bbox_image_url=processed_url
             )
             
             db.add(db_report)
