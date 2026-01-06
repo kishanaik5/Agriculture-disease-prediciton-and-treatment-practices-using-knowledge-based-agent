@@ -61,6 +61,11 @@ class Settings(BaseSettings):
     # Application Configuration
     ENV_MODE: str = "dev"
 
+    # Payment Configuration
+    PAYMENT_BASE_URL: str = "https://dev-payments.kissansampurna.com"
+    PAYMENT_API_KEY: Optional[str] = None
+    PAYMENT_WEBHOOK_SECRET: Optional[str] = None
+
     @field_validator('GEMINI_API_KEY')
     @classmethod
     def validate_credentials(cls, v: str) -> str:

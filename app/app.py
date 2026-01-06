@@ -36,10 +36,24 @@ app = FastAPI(
     openapi_url=f"{settings.API_V1_STR}/openapi.json"
 )
 
-# Silence favicon 404s
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+from fastapi.staticfiles import StaticFiles
+
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():
     return Response(content=b"", media_type="image/x-icon")
+
+# Mount Static
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 async def wait_for_db(engine, max_retries: int = 10):
     global db_ready
@@ -113,3 +127,5 @@ async def health_check():
 # Include Routers
 app.include_router(scan_router, prefix=settings.API_V1_STR, tags=["Scan"])
 app.include_router(async_scan_router, prefix=settings.API_V1_STR, tags=["Async Scan"])
+from app.routers.v1.payment import router as payment_router
+app.include_router(payment_router, prefix=settings.API_V1_STR)

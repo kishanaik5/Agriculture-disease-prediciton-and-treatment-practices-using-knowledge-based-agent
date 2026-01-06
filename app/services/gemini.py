@@ -423,6 +423,7 @@ class GeminiService:
         2. **Segmentation:** Do NOT draw a single large box around the whole vegetable/leaf.
         3. **Fragmentation:** If a disease forms a large curve or ring (like blight or rot), **break it into multiple smaller, overlapping boxes** that tightly hug the affected tissue.
         4. **Precision:** Ignore healthy tissue and background. Only box the actual defect.
+        5. **Coordinate System:** You must use a scale of 0 to 1000 for [ymin, xmin, ymax, xmax].
 
         Return JSON: 
         {{ "detections": [ {{"label": "Specific Disease Name (e.g. Late Blight, Scab)", "box_2d": [ymin, xmin, ymax, xmax]}} ] }}

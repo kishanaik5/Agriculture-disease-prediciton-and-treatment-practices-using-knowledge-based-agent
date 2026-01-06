@@ -42,7 +42,7 @@ ENV/
 bb_images/
 dev/
 s3=*_accessKeys.csv
-static/
+# static/
 
 # Temporary/Archive Files
 *.zip

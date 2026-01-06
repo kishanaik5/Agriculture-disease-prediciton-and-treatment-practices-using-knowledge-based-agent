@@ -173,3 +173,7 @@ cython_debug/
 ._*
 **/._*
 .DS_Store
+
+# Git
+.git
+.git/

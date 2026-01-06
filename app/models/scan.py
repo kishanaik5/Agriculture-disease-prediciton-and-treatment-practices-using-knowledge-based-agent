@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Boolean, Text, Integer, Float
+from sqlalchemy import Column, String, Boolean, Text, Integer, Float, DateTime
 from sqlalchemy.dialects.postgresql import JSONB
 from SharedBackend.managers.base import BaseSchema
 from app.config import init_settings
@@ -26,6 +26,10 @@ class AnalysisReport(BaseSchema):
     original_image_url = Column(Text, nullable=True)
     bbox_image_url = Column(Text, nullable=True)
 
+    # Payment Info
+    order_id = Column(String(100), nullable=True, index=True)
+    payment_status = Column(String(20), default="PENDING", nullable=True)
+
 
 class FruitAnalysis(BaseSchema):
     __tablename__ = "fruit_analysis_report"
@@ -49,6 +53,10 @@ class FruitAnalysis(BaseSchema):
     original_image_url = Column(Text, nullable=True)
     bbox_image_url = Column(Text, nullable=True)
 
+    # Payment Info
+    order_id = Column(String(100), nullable=True, index=True)
+    payment_status = Column(String(20), default="PENDING", nullable=True)
+
 
 class VegetableAnalysis(BaseSchema):
     __tablename__ = "vegetable_analysis_report"
@@ -69,3 +77,25 @@ class VegetableAnalysis(BaseSchema):
     
     original_image_url = Column(Text, nullable=True)
     bbox_image_url = Column(Text, nullable=True)
+
+    # Payment Info
+    order_id = Column(String(100), nullable=True, index=True)
+    payment_status = Column(String(20), default="PENDING", nullable=True)
+
+
+class PaymentTransaction(BaseSchema):
+    __tablename__ = "transaction_table"
+    __table_args__ = {'schema': settings.DB_SCHEMA}
+
+    user_id = Column(String(50), nullable=False, index=True)
+    order_id = Column(String(100), unique=True, nullable=False, index=True)
+    payment_status = Column(String(20), default="PENDING") # PENDING, SUCCESS
+    amount = Column(Float, nullable=False, default=1.0)
+    # currency = Column(String(3), default="INR")
+    
+    # Context
+    analysis_type = Column(String(20)) # fruit, vegetable, crop
+    analysis_report_uid = Column(String, nullable=True, index=True) # Logical Foreign Key to respective report table
+    
+    payment_success_at = Column(DateTime(timezone=True), nullable=True)
+
