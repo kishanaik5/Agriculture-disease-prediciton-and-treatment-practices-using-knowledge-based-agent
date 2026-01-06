@@ -28,6 +28,7 @@ class OrderCreateRequest(BaseModel):
 class OrderResponse(BaseModel):
     order_id: str
     payment_link: Optional[str] = None
+    payment_links: Optional[Dict[str, str]] = Field(None, description="All UPI deep links (gpay, phonepe, web, etc)")
     status: str
     cf_order_id: Optional[str] = None
 
@@ -87,7 +88,6 @@ async def create_order(payload: OrderCreateRequest):
 
                     if existing_tx:
                         existing_tx.amount = payload.amount
-                        # existing_tx.meta = meta_data # If field existed
                     else:
                         new_tx = PaymentTransaction(
                             user_id=payload.user_id,
@@ -96,7 +96,6 @@ async def create_order(payload: OrderCreateRequest):
                             amount=payload.amount,
                             analysis_type=payload.analysis_type,
                             analysis_report_uid=payload.analysis_report_uid,
-                            # created_at handled by DB default
                         )
                         db_session.add(new_tx)
                     
@@ -122,13 +121,18 @@ async def create_order(payload: OrderCreateRequest):
             pay_resp.raise_for_status()
             pay_data = pay_resp.json()
             
-            payment_link = pay_data.get("data", {}).get("data", {}).get("url")
+            link_data = pay_data.get("data", {})
+            raw_payload = link_data.get("payload", {})
+            
+            # Extract main web link for backward compatibility
+            payment_link = link_data.get("data", {}).get("url")
             if not payment_link:
-                payment_link = pay_data.get("data", {}).get("payload", {}).get("web")
+                payment_link = raw_payload.get("web")
             
             return OrderResponse(
                 order_id=order_uid,
                 payment_link=payment_link,
+                payment_links=raw_payload, # Return full dict of links
                 status="PENDING",
                 cf_order_id=cf_order_id
             )
