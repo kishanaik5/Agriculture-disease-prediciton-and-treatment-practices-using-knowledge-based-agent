@@ -91,6 +91,14 @@
                 {
                     "name": "S3_BUCKET_PUBLIC",
                     "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-cv-dev/S3_BUCKET_PUBLIC"
+                },
+                {
+                    "name": "PAYMENT_BASE_URL",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-cv-dev/PAYMENT_BASE_URL"
+                },
+                {
+                    "name": "PAYMENT_API_KEY",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-cv-dev/PAYMENT_API_KEY"
                 }
             ],
             "systemControls": [],
