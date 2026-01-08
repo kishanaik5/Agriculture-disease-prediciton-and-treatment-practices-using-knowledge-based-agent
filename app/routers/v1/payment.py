@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import init_settings
 from app.database import engine, get_db
-from app.models.scan import PaymentTransaction
+from app.models.scan import PaymentTransaction, AnalysisReport, FruitAnalysis, VegetableAnalysis
 
 router = APIRouter(prefix="/payments", tags=["Payments"])
 settings = init_settings()
@@ -30,7 +30,7 @@ class OrderResponse(BaseModel):
     payment_link: Optional[str] = None
     payment_links: Optional[Dict[str, str]] = Field(None, description="All UPI deep links (gpay, phonepe, web, etc)")
     status: str
-    cf_order_id: Optional[str] = None
+    transaction_id: Optional[str] = None
 
 # Helper to map analysis_type to context_type (for external API only)
 def get_context_type(analysis_type: str) -> str:
@@ -88,6 +88,7 @@ async def create_order(payload: OrderCreateRequest):
 
                     if existing_tx:
                         existing_tx.amount = payload.amount
+                        existing_tx.transaction_id = cf_order_id
                     else:
                         new_tx = PaymentTransaction(
                             user_id=payload.user_id,
@@ -96,6 +97,7 @@ async def create_order(payload: OrderCreateRequest):
                             amount=payload.amount,
                             analysis_type=payload.analysis_type,
                             analysis_report_uid=payload.analysis_report_uid,
+                            transaction_id=cf_order_id,
                         )
                         db_session.add(new_tx)
                     
@@ -134,7 +136,7 @@ async def create_order(payload: OrderCreateRequest):
                 payment_link=payment_link,
                 payment_links=raw_payload, # Return full dict of links
                 status="PENDING",
-                cf_order_id=cf_order_id
+                transaction_id=cf_order_id
             )
 
         except httpx.HTTPStatusError as e:
@@ -172,11 +174,37 @@ async def verify_payment(order_id: str):
                         tx.payment_status = status
                         if status == 'SUCCESS':
                             tx.payment_success_at = datetime.utcnow()
+                        elif status == 'FAILED':
+                            # Optionally handle any failure specific logic here
+                            # Ensuring success date is not set if failed
+                            tx.payment_success_at = None
                         await db_session.commit()
                         
-                        # Note: User mentioned overwriting analysis_report_id, but it should be correct from creation.
-                        # If specific syncing is needed, we would do it here.
-                        # For now, updating the status is the key requirement.
+                        await db_session.commit()
+                        
+                        # Sync Report Status (User Request)
+                        # If payment is success, update the respective report table immediately
+                        if status == 'SUCCESS' and tx.analysis_report_uid:
+                            target_model = None
+                            atype = tx.analysis_type.lower() if tx.analysis_type else ""
+                            
+                            if atype in ["crop", "crops"]:
+                                target_model = AnalysisReport
+                            elif atype in ["fruit", "fruits"]:
+                                target_model = FruitAnalysis
+                            elif atype in ["vegetable", "vegetables"]:
+                                target_model = VegetableAnalysis
+                                
+                            if target_model:
+                                # Fetch and Update
+                                r_stmt = select(target_model).where(target_model.uid == tx.analysis_report_uid)
+                                r_res = await db_session.execute(r_stmt)
+                                report_rec = r_res.scalars().first()
+                                if report_rec:
+                                    report_rec.payment_status = 'SUCCESS'
+                                    await db_session.commit()
+                                    await db_session.refresh(report_rec)
+
                         
                 finally:
                     await db_session.close()

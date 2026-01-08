@@ -21,6 +21,75 @@ class GeminiService:
         # System instruction for BBox model
         self.bbox_instruction = "You are a precise scientific annotator. You never group objects; you identify every individual instance separately using [ymin, xmin, ymax, xmax]."
 
+    async def analyze_crop_qa(self, image_data: bytes, crop_name: str, language: str = "en", mime_type: str = "image/jpeg") -> dict:
+        """
+        Lightweight QA Analysis using Gemini Flash.
+        Determines Validity and Health Status ONLY.
+        """
+        prompt = f"""
+        Role: Expert Plant Pathologist.
+        Task: QA Check.
+        
+        1. VALIDATE: Is this `{crop_name}`?
+        2. CHECK HEALTH: Is it healthy? (Yes/No)
+        3. IF UNHEALTHY: Name the disease (Scientific/Common) briefly.
+        
+        Strict JSON Output:
+        {{
+            "is_valid_crop": true/false,
+            "detected_object_name": "...",
+            "is_healthy": true/false,
+            "disease_name": "..." (or null),
+            "original_image_url": null
+        }}
+        """
+        return await self._generate_response(prompt, image_data, mime_type)
+
+    async def analyze_fruit_qa(self, image_data: bytes, crop_name: str, language: str = "en", mime_type: str = "image/jpeg") -> dict:
+        """
+        Lightweight QA Analysis for Fruits.
+        """
+        prompt = f"""
+        Role: Expert Pomologist.
+        Task: QA Check.
+        
+        1. VALIDATE: Is this `{crop_name}`?
+        2. CHECK HEALTH: Is it healthy? (Yes/No)
+        3. IF UNHEALTHY: Name the disease/rot briefly.
+        
+        Strict JSON Output:
+        {{
+            "is_valid_crop": true/false,
+            "detected_object_name": "...",
+            "is_healthy": true/false,
+            "disease_name": "..." (or null)
+        }}
+        """
+        return await self._generate_response(prompt, image_data, mime_type)
+
+    async def analyze_vegetable_qa(self, image_data: bytes, crop_name: str, language: str = "en", mime_type: str = "image/jpeg") -> dict:
+        """
+        Lightweight QA Analysis for Vegetables.
+        """
+        prompt = f"""
+        Role: Expert Plant Pathologist.
+        Task: QA Check.
+        
+        1. VALIDATE: Is this `{crop_name}`?
+        2. CHECK HEALTH: Is it healthy? (Yes/No)
+        3. IF UNHEALTHY: Name the disease/defect briefly.
+        
+        Strict JSON Output:
+        {{
+            "is_valid_crop": true/false,
+            "detected_object_name": "...",
+            "is_healthy": true/false,
+            "disease_name": "..." (or null)
+        }}
+        """
+        return await self._generate_response(prompt, image_data, mime_type)
+
+
     async def analyze_crop(self, image_data: bytes, crop_name: str, language: str = "en", mime_type: str = "image/jpeg") -> dict:
         """
         Analyzes the crop image using Gemini Flash with 5 retries, falling back to Pro on failure.

@@ -12,8 +12,6 @@ class AnalysisReport(BaseSchema):
     user_id = Column(String(50), nullable=False, index=True) 
     user_input_crop = Column(String(255), nullable=True)
     language = Column(String(10), default="en") 
-    is_mixed_cropping = Column(Boolean, nullable=True)
-    acres_of_land = Column(String(50), nullable=True)
     
     detected_crop = Column(String(255), nullable=True)
     detected_disease = Column(String(255), nullable=True)
@@ -96,6 +94,8 @@ class PaymentTransaction(BaseSchema):
     # Context
     analysis_type = Column(String(20)) # fruit, vegetable, crop
     analysis_report_uid = Column(String, nullable=True, index=True) # Logical Foreign Key to respective report table
+    
+    transaction_id = Column(String, nullable=True) # Stores cf_order_id
     
     payment_success_at = Column(DateTime(timezone=True), nullable=True)
 

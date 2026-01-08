@@ -241,10 +241,10 @@ class KnowledgeService:
         self._load_data("knowledge_based_folder/vegetables_kb_data/Vegetable_kb_data_en.csv", 'en')
         self._load_data("knowledge_based_folder/vegetables_kb_data/Vegetable_kb_data_kn.csv", 'kn')
 
-    def get_crops_with_icons(self, language: str = 'en', category_filter: str = None) -> List[Dict[str, str]]:
+    def get_crops_with_icons(self, language: str = 'en', category_filter: str = None, name_filter: str = None) -> List[Dict[str, str]]:
         """
         Return list of crops with Name, image, category.
-        Optional: Filter by category (case-insensitive).
+        Optional: Filter by category (case-insensitive) or name (case-insensitive substring).
         """
         result = []
         for item in self.crop_items:
@@ -258,13 +258,17 @@ class KnowledgeService:
             # Select name based on language
             name = item["kannada_name"] if language == 'kn' and item.get("kannada_name") else item["Name"]
             
+            # Filter by name if provided
+            if name_filter:
+                if name_filter.lower() not in name.lower():
+                    continue
+            
             result.append({
                 "Name": name,
                 "image": item["image"],
                 "category": item["category"]
             })
             
-        # Sort by Name
         # Sort by Name
         result.sort(key=lambda x: x["Name"])
         return result
