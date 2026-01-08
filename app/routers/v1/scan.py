@@ -329,6 +329,11 @@ async def generate_full_report(
 
     treatment_from_json = build_treatment_text(full_analysis)
     
+    # Fallback message
+    DEFAULT_TREATMENT = "Consult a doctor"
+    if report.language == 'kn':
+        DEFAULT_TREATMENT = "ವೈದ್ಯರನ್ನು ಸಂಪರ್ಕಿಸಿ" # Consult a doctor in Kannada
+
     if cat in ["crop", "crops"]:
          d_info = full_analysis.get("disease_info", {})
          p_info = full_analysis.get("plant_info", {})
@@ -338,9 +343,12 @@ async def generate_full_report(
          # KB Lookup
          kb_text = knowledge_service.get_treatment(crop_name, d_name, scientific_name=d_sci, language=report.language)
          
-         # Logic: Use KB if valid, else JSON
-         final_treatment = len(kb_text) > 10 and kb_text or treatment_from_json
-         if not final_treatment: final_treatment = kb_text # Fallback
+         # Logic: Use KB if valid, else "Consult a doctor". 
+         # STRICT REQUIREMENT: Do NOT use treatment_from_json/LLM output.
+         if kb_text and len(kb_text) > 5:
+             final_treatment = kb_text
+         else:
+             final_treatment = DEFAULT_TREATMENT
 
          report.detected_crop = p_info.get("common_name")
          report.detected_disease = d_name
@@ -357,9 +365,10 @@ async def generate_full_report(
          
          kb_text = knowledge_service.get_treatment(crop_name, d_name, scientific_name=d_sci, language=report.language)
          
-         final_treatment = treatment_from_json
-         if kb_text and len(kb_text.strip()) > 10 and "no treatment" not in kb_text.lower():
+         if kb_text and len(kb_text.strip()) > 5:
             final_treatment = kb_text
+         else:
+            final_treatment = DEFAULT_TREATMENT
             
          report.disease_name = d_name
          report.pathogen_scientific_name = d_sci
@@ -376,9 +385,10 @@ async def generate_full_report(
          
          kb_text = knowledge_service.get_treatment(crop_name, d_name, scientific_name=d_sci, language=report.language)
          
-         final_treatment = treatment_from_json
-         if kb_text and len(kb_text.strip()) > 10 and "no treatment" not in kb_text.lower():
+         if kb_text and len(kb_text.strip()) > 5:
             final_treatment = kb_text
+         else:
+            final_treatment = DEFAULT_TREATMENT
          
          report.disease_name = d_name
          report.scientific_name = d_sci

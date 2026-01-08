@@ -31,6 +31,10 @@ class OrderResponse(BaseModel):
     payment_links: Optional[Dict[str, str]] = Field(None, description="All UPI deep links (gpay, phonepe, web, etc)")
     status: str
     transaction_id: Optional[str] = None
+    # Context info
+    user_id: Optional[str] = None
+    report_id: Optional[str] = None
+    category: Optional[str] = None
 
 # Helper to map analysis_type to context_type (for external API only)
 def get_context_type(analysis_type: str) -> str:
@@ -136,7 +140,10 @@ async def create_order(payload: OrderCreateRequest):
                 payment_link=payment_link,
                 payment_links=raw_payload, # Return full dict of links
                 status="PENDING",
-                transaction_id=cf_order_id
+                transaction_id=cf_order_id,
+                user_id=payload.user_id,
+                report_id=payload.analysis_report_uid,
+                category=payload.analysis_type
             )
 
         except httpx.HTTPStatusError as e:
@@ -164,6 +171,7 @@ async def verify_payment(order_id: str):
             status = data.get("status", "PENDING")
             
             # 2. Update Local PaymentTransaction Table
+            tx_info = {}
             async for db_session in get_db():
                 try:
                     stmt = select(PaymentTransaction).where(PaymentTransaction.order_id == order_id)
@@ -178,7 +186,13 @@ async def verify_payment(order_id: str):
                             # Optionally handle any failure specific logic here
                             # Ensuring success date is not set if failed
                             tx.payment_success_at = None
-                        await db_session.commit()
+                        
+                        # Capture info for return
+                        tx_info = {
+                            "user_id": tx.user_id,
+                            "report_id": tx.analysis_report_uid,
+                            "category": tx.analysis_type
+                        }
                         
                         await db_session.commit()
                         
@@ -204,13 +218,18 @@ async def verify_payment(order_id: str):
                                     report_rec.payment_status = 'SUCCESS'
                                     await db_session.commit()
                                     await db_session.refresh(report_rec)
-
                         
                 finally:
                     await db_session.close()
                 break
 
-            return {"order_id": order_id, "status": status}
+            return {
+                "order_id": order_id, 
+                "status": status,
+                "user_id": tx_info.get("user_id"),
+                "report_id": tx_info.get("report_id"),
+                "category": tx_info.get("category")
+            }
             
         except Exception as e:
              print(f"Verify failed: {e}")

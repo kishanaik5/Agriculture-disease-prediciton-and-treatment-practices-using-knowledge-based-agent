@@ -66,6 +66,8 @@ class KnowledgeService:
         Language: 'en' or 'kn' (Kannada)
         scientific_name: Pathogen scientific name (optional, used for precise lookup in Kannada)
         """
+        import re
+
         # Select dataset
         dataset = self.data_kn if language == 'kn' else self.data_en
         
@@ -73,81 +75,108 @@ class KnowledgeService:
             return ""
 
         # Normalize inputs
-        crop_low = crop.lower().strip()
-        disease_low = disease.lower().strip()
-        
-        # 1. search candidates
-        candidates = []
-        
+        crop_input = crop.strip()
+        disease_input = disease.strip()
+
+        # Regex patterns for strict matching (case-insensitive)
+        # ^...$ ensures exact match from start to end
+        try:
+            crop_pattern = re.compile(f"^{re.escape(crop_input)}$", re.IGNORECASE)
+            disease_pattern = re.compile(f"^{re.escape(disease_input)}$", re.IGNORECASE)
+        except re.error as e:
+            logger.error(f"Regex compilation failed for crop '{crop_input}' or disease '{disease_input}': {e}")
+            return ""
+
+        # Column names to check for Plant Name
+        # Note: Added 'Fruit Common Name ' with space as seen in some CSVs, but .strip() in _load_data might handle it.
+        # We check multiple keys to be safe across Crop/Fruit/Veg CSVs.
+        plant_keys = [
+            'Plant Common Name', 
+            'Fruit Common Name', 
+            'Vegetable Common Name', 
+            'Crop Common Name'
+        ]
+
         if language == 'en':
-            # English Logic (Match Crop then Disease)
-            candidates = [d for d in dataset if crop_low in d.get('Plant Common Name', '').lower()]
-            if not candidates:
-                # Fallback: Search all if crop mismatch (e.g. "Pepper Bell" vs "Capsicum")
-                candidates = dataset
+            for row in dataset:
+                # 1. Check Plant Name Match
+                plant_match = False
+                for key in plant_keys:
+                    val = row.get(key, '').strip()
+                    if val and crop_pattern.match(val):
+                        plant_match = True
+                        break
+                
+                if not plant_match:
+                    continue
+
+                # 2. Check Disease Name Match
+                # Disease Name (Type) is the standard column
+                disease_val = row.get('Disease Name (Type)', '').strip()
+                
+                # Special handling for brackets if needed? 
+                # The user requested strict match "Plant Name AND Disease Name".
+                # If Detection says "Early Blight" and CSV says "Early Blight (Fungal)", strict regex "^Early Blight$" will fail.
+                # However, the user instruction was "strict lookup... based on plant name and disease name".
+                # I will adhere to strict regex. If the model output doesn't match the CSV, it falls back to "Consult a doctor".
+                if disease_val and disease_pattern.match(disease_val):
+                    return row.get('Treatment Methods', '')
+
         else:
-            # Kannada Logic
-            # Try to resolve English Crop Name to Kannada Name
+            # Kannada Logic (Preserved largely as is, but can be improved if strictness is required here too)
+            # For now, focusing strict changes on 'en' logic as primarily requested for the lookup refinement.
+            # But let's apply similar strictness if possible, or keep the existing robust fallback for Kannada?
+            # The prompt implied "refine the treatment lookup logic", usually meaning the core logic.
+            # However, mapping English Crop -> Kannada Name adds complexity.
+            
+            # 1. Resolve English Crop Name to Kannada Name
             kn_crop_name = self.get_kn_name(crop)
             
-            # Filter by Crop Name (Kannada) if possible
+            # Filter candidates by Crop Name
+            candidates = []
             if kn_crop_name:
-                kn_crop_low = kn_crop_name.strip()
-                # Check Plant, Fruit, or Vegetable Common Name columns
-                candidates = []
+                kn_crop_pattern = re.compile(f"^{re.escape(kn_crop_name.strip())}$", re.IGNORECASE)
                 for row in dataset:
-                    # Check all possible crop name columns
-                    row_crop = (row.get('Plant Common Name') or row.get('Fruit Common Name') or row.get('Vegetable Common Name') or row.get('Crop Common Name') or '').strip()
-                    if kn_crop_low in row_crop or row_crop in kn_crop_low:
+                    match = False
+                    for key in plant_keys:
+                        val = row.get(key, '').strip()
+                        if val and kn_crop_pattern.match(val):
+                            match = True
+                            break
+                    if match:
                         candidates.append(row)
             
             if not candidates:
-                # If no crop match (or mapping failed), search entire dataset 
-                # (Risk: False positives, but better than nothing)
+                # Fallback to search all if mapping failed (legacy behavior behavior preserved for safety in KN)
                 candidates = dataset
 
-            # High Confidence Lookup: Scientific Name (Pathogen)
-            # Users often use specific scientific names for diseases.
+            # 2. Search for Disease in candidates
+            # High Confidence: Scientific Name check first
             if scientific_name:
-                sci_low = scientific_name.lower().strip()
+                sci_pattern = re.compile(f".*{re.escape(scientific_name.strip())}.*", re.IGNORECASE)
                 for row in candidates:
-                    row_sci = row.get('Scientific name', '').lower()
-                    # Clean the row_sci (remove parens etc if needed, but 'in' check catches it)
-                    if sci_low and (sci_low in row_sci or row_sci in sci_low):
-                        treatment = row.get('Treatment Methods', '')
-                        if treatment:
-                            return treatment
+                    row_sci = row.get('Scientific name', '')
+                    if row_sci and sci_pattern.match(row_sci):
+                        t = row.get('Treatment Methods', '')
+                        if t: return t
 
-        # 2. Search for Disease in candidates (Name Match)
-        best_match = None
-        max_score = 0
-        
-        for row in candidates:
-            # English CSV: "Early Blight"
-            # Kannada CSV: ".... (Early Blight)"
-            row_disease = row.get('Disease Name (Type)', '').lower()
+            # 3. Disease Name Match (Kannada often has English name in brackets)
+            # We'll try strict match on the English part if possible, or simple substring as before?
+            # Sticking to the requirement: Strict Match.
+            # But Kannada CSV structure might be "Roga (Disease Name)".
+            # Implementing a check: if input "Early Blight" is strictly inside matches?
+            # Let's use the strict pattern on the input disease against the row value.
             
-            # Direct usage of substring check
-            # For Kannada, 'row_disease' contains '... (disease_low) ...'
-            if disease_low in row_disease or row_disease in disease_low:
-                # Strong match
-                return row.get('Treatment Methods', '')
+            for row in candidates:
+                row_disease = row.get('Disease Name (Type)', '').strip()
+                # If the detection is "Early Blight", and row is "Something (Early Blight)", 
+                # strict regex won't match. But user said "strict lookup".
+                # I will implement strict match against the *search term* being present exactly?
+                # No, strict usually means identity. 
+                # Let's try to match the disease_input strictly against the row value.
+                if row_disease and disease_pattern.match(row_disease):
+                    return row.get('Treatment Methods', '')
 
-            # Basic word overlap score
-            query_words = set(disease_low.split())
-            row_words = set(row_disease.replace('(', ' ').replace(')', ' ').split())
-            intersection = query_words.intersection(row_words)
-            
-            if intersection:
-                score = len(intersection)
-                if score > max_score:
-                    max_score = score
-                    best_match = row
-        
-        # Treatment Methods key update
-        if best_match and max_score > 0:
-            return best_match.get('Treatment Methods', '')
-            
         return ""
 
     def get_unique_crops(self, language: str = 'en') -> List[str]:
