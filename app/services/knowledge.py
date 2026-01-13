@@ -60,122 +60,124 @@ class KnowledgeService:
         except Exception as e:
             logger.error(f"Failed to load Knowledge CSV ({lang}): {e}")
 
-    def get_treatment(self, crop: str, disease: str, scientific_name: str = None, language: str = 'en') -> str:
+    async def get_treatment(self, crop: str, disease: str, category: str, db: Optional[object] = None, scientific_name: str = None, language: str = 'en') -> str:
         """
         Search for a treatment.
         Language: 'en' or 'kn' (Kannada)
-        scientific_name: Pathogen scientific name (optional, used for precise lookup in Kannada)
+        scientific_name: Pathogen scientific name (optional)
+        db: AsyncSession (required for 'en' lookup)
         """
         import re
-
-        # Select dataset
-        dataset = self.data_kn if language == 'kn' else self.data_en
-        
-        if not dataset:
-            return ""
+        from sqlalchemy import select, func, or_
+        from app.models.scan import KnowledgeBase
 
         # Normalize inputs
         crop_input = crop.strip()
         disease_input = disease.strip()
+        
+        # Normalize category
+        cat_search = category.lower()
+        if cat_search.endswith('s') and cat_search != "crops": 
+            cat_search = cat_search[:-1]
+        elif cat_search == "crops":
+            cat_search = "crop"
+
+        if language == 'en':
+            if not db:
+                logger.warning("DB session not provided for English KB lookup. Returning empty.")
+                return ""
+            
+            try:
+                # Strict DB Lookup
+                # Filter by Category, Item (Crop) Name, and Scientific Name (if avail) or Disease Name
+                
+                conditions = [
+                    func.lower(KnowledgeBase.category) == cat_search,
+                    func.lower(KnowledgeBase.item_name) == crop_input.lower()
+                ]
+                
+                if scientific_name and len(scientific_name) > 2:
+                    # Try matching scientific name
+                    conditions.append(func.lower(KnowledgeBase.scientific_name) == scientific_name.lower())
+                else:
+                    # Fallback to disease name
+                    conditions.append(func.lower(KnowledgeBase.disease_name) == disease_input.lower())
+                
+                stmt = select(KnowledgeBase.treatment).where(*conditions)
+                result = await db.execute(stmt)
+                treatment = result.scalar_one_or_none()
+                
+                if treatment:
+                    return treatment
+                
+                # Double fallback: If strict sci name failed, try disease name?
+                if scientific_name:
+                     fallback_stmt = select(KnowledgeBase.treatment).where(
+                        func.lower(KnowledgeBase.category) == cat_search,
+                        func.lower(KnowledgeBase.item_name) == crop_input.lower(),
+                        func.lower(KnowledgeBase.disease_name) == disease_input.lower()
+                     )
+                     res2 = await db.execute(fallback_stmt)
+                     t2 = res2.scalar_one_or_none()
+                     if t2: return t2
+                
+                return ""
+                
+            except Exception as e:
+                logger.error(f"DB Lookup failed: {e}")
+                return ""
+
+        # Kannada Logic (Memory-based fallback)
+        dataset = self.data_kn
+        if not dataset:
+            return ""
 
         # Regex patterns for strict matching (case-insensitive)
-        # ^...$ ensures exact match from start to end
         try:
             crop_pattern = re.compile(f"^{re.escape(crop_input)}$", re.IGNORECASE)
             disease_pattern = re.compile(f"^{re.escape(disease_input)}$", re.IGNORECASE)
         except re.error as e:
-            logger.error(f"Regex compilation failed for crop '{crop_input}' or disease '{disease_input}': {e}")
+            logger.error(f"Regex compilation failed: {e}")
             return ""
 
-        # Column names to check for Plant Name
-        # Note: Added 'Fruit Common Name ' with space as seen in some CSVs, but .strip() in _load_data might handle it.
-        # We check multiple keys to be safe across Crop/Fruit/Veg CSVs.
-        plant_keys = [
-            'Plant Common Name', 
-            'Fruit Common Name', 
-            'Vegetable Common Name', 
-            'Crop Common Name'
-        ]
+        # Column names
+        plant_keys = ['Plant Common Name', 'Fruit Common Name', 'Vegetable Common Name', 'Crop Common Name']
 
-        if language == 'en':
+        # 1. Resolve English Crop Name to Kannada Name
+        kn_crop_name = self.get_kn_name(crop)
+        
+        candidates = []
+        if kn_crop_name:
+            kn_crop_pattern = re.compile(f"^{re.escape(kn_crop_name.strip())}$", re.IGNORECASE)
             for row in dataset:
-                # 1. Check Plant Name Match
-                plant_match = False
+                match = False
                 for key in plant_keys:
                     val = row.get(key, '').strip()
-                    if val and crop_pattern.match(val):
-                        plant_match = True
+                    if val and kn_crop_pattern.match(val):
+                        match = True
                         break
-                
-                if not plant_match:
-                    continue
+                if match:
+                    candidates.append(row)
+        
+        if not candidates:
+            # Fallback search if mapping failed
+            candidates = dataset
 
-                # 2. Check Disease Name Match
-                # Disease Name (Type) is the standard column
-                disease_val = row.get('Disease Name (Type)', '').strip()
-                
-                # Special handling for brackets if needed? 
-                # The user requested strict match "Plant Name AND Disease Name".
-                # If Detection says "Early Blight" and CSV says "Early Blight (Fungal)", strict regex "^Early Blight$" will fail.
-                # However, the user instruction was "strict lookup... based on plant name and disease name".
-                # I will adhere to strict regex. If the model output doesn't match the CSV, it falls back to "Consult a doctor".
-                if disease_val and disease_pattern.match(disease_val):
-                    return row.get('Treatment Methods', '')
-
-        else:
-            # Kannada Logic (Preserved largely as is, but can be improved if strictness is required here too)
-            # For now, focusing strict changes on 'en' logic as primarily requested for the lookup refinement.
-            # But let's apply similar strictness if possible, or keep the existing robust fallback for Kannada?
-            # The prompt implied "refine the treatment lookup logic", usually meaning the core logic.
-            # However, mapping English Crop -> Kannada Name adds complexity.
-            
-            # 1. Resolve English Crop Name to Kannada Name
-            kn_crop_name = self.get_kn_name(crop)
-            
-            # Filter candidates by Crop Name
-            candidates = []
-            if kn_crop_name:
-                kn_crop_pattern = re.compile(f"^{re.escape(kn_crop_name.strip())}$", re.IGNORECASE)
-                for row in dataset:
-                    match = False
-                    for key in plant_keys:
-                        val = row.get(key, '').strip()
-                        if val and kn_crop_pattern.match(val):
-                            match = True
-                            break
-                    if match:
-                        candidates.append(row)
-            
-            if not candidates:
-                # Fallback to search all if mapping failed (legacy behavior behavior preserved for safety in KN)
-                candidates = dataset
-
-            # 2. Search for Disease in candidates
-            # High Confidence: Scientific Name check first
-            if scientific_name:
-                sci_pattern = re.compile(f".*{re.escape(scientific_name.strip())}.*", re.IGNORECASE)
-                for row in candidates:
-                    row_sci = row.get('Scientific name', '')
-                    if row_sci and sci_pattern.match(row_sci):
-                        t = row.get('Treatment Methods', '')
-                        if t: return t
-
-            # 3. Disease Name Match (Kannada often has English name in brackets)
-            # We'll try strict match on the English part if possible, or simple substring as before?
-            # Sticking to the requirement: Strict Match.
-            # But Kannada CSV structure might be "Roga (Disease Name)".
-            # Implementing a check: if input "Early Blight" is strictly inside matches?
-            # Let's use the strict pattern on the input disease against the row value.
-            
+        # 2. Search for Disease in candidates
+        # High Confidence: Scientific Name check first
+        if scientific_name:
+            sci_pattern = re.compile(f".*{re.escape(scientific_name.strip())}.*", re.IGNORECASE)
             for row in candidates:
-                row_disease = row.get('Disease Name (Type)', '').strip()
-                # If the detection is "Early Blight", and row is "Something (Early Blight)", 
-                # strict regex won't match. But user said "strict lookup".
-                # I will implement strict match against the *search term* being present exactly?
-                # No, strict usually means identity. 
-                # Let's try to match the disease_input strictly against the row value.
-                if row_disease and disease_pattern.match(row_disease):
-                    return row.get('Treatment Methods', '')
+                row_sci = row.get('Scientific name', '')
+                if row_sci and sci_pattern.match(row_sci):
+                    t = row.get('Treatment Methods', '')
+                    if t: return t
+
+        # 3. Disease Name Match
+        for row in candidates:
+            row_disease = row.get('Disease Name (Type)', '').strip()
+            if row_disease and disease_pattern.match(row_disease):
+                return row.get('Treatment Methods', '')
 
         return ""
 

@@ -107,6 +107,7 @@ class GeminiService:
         - JSON KEYS must remain exactly as defined (English)
         - JSON VALUES should be in {lang_target}
         - Scientific names should remain in Latin. For physiological disorders, use the English technical term (e.g., "Calcium Deficiency").
+        - "severity" field must be CONCISE (e.g., "Low", "Moderate", "High", "Critical"). Do NOT include descriptions.
 
         [CONTEXT]:
         The user claims this is a "{crop_name}" plant.
@@ -126,7 +127,8 @@ class GeminiService:
         2. Identify the Disease. If no disease is visible, return "Healthy".
         3. Explain the CAUSE of the disease (how and why it occurs).
         4. Explain disease spread (seed, soil, wind, rain, insects).
-        5. Provide integrated disease management:
+        5. Determine SEVERITY: Provide ONLY the level (e.g., "Low", "Moderate", "High"). do NOT explain.
+        6. Provide integrated disease management:
         - Organic & biological practices
         - Chemical practices (active ingredients only)
 
@@ -549,5 +551,54 @@ class GeminiService:
         except Exception as e:
             logger.error(f"Detection failed: {e}")
             return []
+
+    async def translate_report_content(self, data: dict, target_language: str) -> dict:
+        """
+        Translates the report content to the target language using Gemini Flash.
+        """
+        
+        prompt = f"""
+        Role: Expert Agricultural Translator.
+        Task: Translate the following analysis report JSON into {target_language}.
+
+        Input JSON:
+        {json.dumps(data, indent=2)}
+
+        Instructions:
+        1. Return STRICT JSON structure matching the input.
+        2. Translate values for human-readable fields: 
+           - 'disease_name', 'grade', 'treatment', 'severity' (Keep concise, e.g. "Low", "Moderate"), 'item_name'
+           - ALL nested descriptive text in 'analysis_raw' (symptoms, cause, management, reasoning, etc).
+        3. DO NOT translate:
+           - Keys (must remain English)
+           - 'scientific_name' (keep Latin/Scientific)
+           - 'pathogen_scientific_name'
+           - logical constants like 'is_valid_crop'
+           - URLs, IDs
+        
+        Output:
+        """
+        
+        # Reuse _generate_response
+        # We need a mime_type for text input? No, _generate_response expects image_data.
+        # We need to call client directly or adapt _generate_response.
+        # Since _generate_response is tightly coupled with image, I will write a text-only helper or use client here.
+        
+        json_config = types.GenerateContentConfig(response_mime_type="application/json")
+        
+        try:
+             # Using Flash model
+            response = await self.client.aio.models.generate_content(
+                model=self.flash_model,
+                contents=[prompt],
+                config=json_config
+            )
+            if response.text:
+                return json.loads(response.text)
+        except Exception as e:
+            logger.error(f"Translation failed: {e}")
+            return {} # Return empty on failure or raise
+        
+        return {}
 
 gemini_service = GeminiService()

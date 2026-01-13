@@ -1,6 +1,6 @@
 from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.database import get_db
+from app.database import get_db, SessionLocal
 from app.models.scan import AnalysisReport
 from app.schemas.scan import ScanResponse, AnalysisResult
 from app.services.gemini import gemini_service
@@ -38,10 +38,12 @@ async def process_crop_scan_async(
     crop_name: str,
     language: str,
     is_mixed_cropping: bool,
-    acres_of_land: Optional[str],
-    db: AsyncSession
+    acres_of_land: Optional[str]
 ):
     """Background task to process crop scan"""
+    args = locals()
+    
+    db = SessionLocal()
     try:
         await task_manager.set_task_status(task_id, "processing", {"progress": 10})
         
@@ -84,7 +86,7 @@ async def process_crop_scan_async(
         
         kb_text = ""
         if disease_name and disease_name.lower() != "unknown":
-            kb_text = knowledge_service.get_treatment(crop_name, disease_name, language=language)
+            kb_text = await knowledge_service.get_treatment(crop_name, disease_name, db=db, language=language)
         
         lower_name = str(disease_name).lower().strip()
         is_healthy = (
@@ -138,13 +140,15 @@ async def process_crop_scan_async(
         if not is_healthy:
             db_report = AnalysisReport(
                 user_id=user_id,
-                user_input_crop=crop_name,
+                crop_name=crop_name, # Renamed from user_input_crop maps to crop_name
                 language=language,
-                is_mixed_cropping=is_mixed_cropping,
-                acres_of_land=acres_of_land,
-                detected_crop=plant_info.get("common_name"),
-                detected_disease=disease_name,
-                pathogen_type=disease_info.get("pathogen_type"),
+                # is_mixed_cropping and acres_of_land removed from DB
+                # detected_crop=plant_info.get("common_name"), # Merged into crop_name or dropped if we trust user input. Logic needs to align.
+                # If we want to store detected crop separately, we need a column. But we are renaming detected_crop -> crop_name.
+                # So we should decide whether to store user input or detected name. 
+                # Scan.py was using user input for crop_name. I will stick to user input for crop_name for consistency.
+                disease_name=disease_name, # Renamed from detected_disease
+                scientific_name=disease_info.get("pathogen_type"),
                 severity=str(analysis_dict.get("disease_info", {}).get("severity")),
                 treatment=kb_text,
                 analysis_raw=analysis_dict,
@@ -166,6 +170,8 @@ async def process_crop_scan_async(
     except Exception as e:
         logger.error(f"Background processing failed for task {task_id}: {e}")
         await task_manager.set_task_status(task_id, "failed", {"error": str(e)})
+    finally:
+        await db.close()
 
 
 @router.post("/crop_scan_async")
@@ -176,8 +182,7 @@ async def analyze_crop_async(
     crop_name: str = Form(...),
     language: str = Form("en", description="Language code: en or kn"),
     is_mixed_cropping: bool = Form(False),
-    acres_of_land: Optional[str] = Form(None),
-    db: AsyncSession = Depends(get_db)
+    acres_of_land: Optional[str] = Form(None)
 ):
     """
     Async version of crop_scan endpoint.
@@ -205,8 +210,7 @@ async def analyze_crop_async(
         crop_name=crop_name,
         language=language,
         is_mixed_cropping=is_mixed_cropping,
-        acres_of_land=acres_of_land,
-        db=db
+        acres_of_land=acres_of_land
     )
     
     return {

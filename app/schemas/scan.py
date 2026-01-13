@@ -78,6 +78,7 @@ class ScanResponse(BaseModel):
     
     # inputs which might be echoed back
     user_input_crop: Optional[str] = None
+    category: Optional[str] = None
     language: Optional[str] = "en"
     
     # Full Analysis

@@ -30,34 +30,138 @@ class BytesUploadFile:
 
 router = APIRouter()
 
-@router.get("/crops", response_model=list[CropItem])
-async def get_crops(language: str = "en"):
-    """
-    Get list of supported crops (field crops only) with icons.
-    """
-    return knowledge_service.get_crops_with_icons(language=language, category_filter="crop")
 
-@router.get("/fruits", response_model=list[CropItem])
-async def get_fruits(language: str = "en"):
-    """
-    Get list of supported fruits.
-    """
-    return knowledge_service.get_crops_with_icons(language=language, category_filter="fruit")
 
-@router.get("/vegetables", response_model=list[CropItem])
-async def get_vegetables(language: str = "en"):
-    """
-    Get list of supported vegetables.
-    """
-    return knowledge_service.get_crops_with_icons(language=language, category_filter="vegetable")
+from app.models.scan import MasterIcon
 
-@router.get("/All", response_model=list[CropItem])
-async def get_all_items(language: str = "en", name: Optional[str] = None, category: Optional[str] = None):
+@router.get("/All")
+async def get_all_items(language: str = "en", name: Optional[str] = None, category: Optional[str] = None, db: AsyncSession = Depends(get_db)):
     """
-    Get all supported items (crops, fruits, vegetables) with icons.
-    Supports filtering by name and category.
+    Get all supported items from MasterIcon DB.
     """
-    return knowledge_service.get_crops_with_icons(language=language, category_filter=category, name_filter=name)
+    stmt = select(MasterIcon)
+    if category:
+        # DB stores "crop", "fruit", "vegetable"
+        # Input might be plural
+        cat_search = category.lower()
+        if cat_search.endswith('s') and cat_search != "crops": # vegetables, fruits
+            cat_search = cat_search[:-1]
+        elif cat_search == "crops":
+            cat_search = "crop"
+            
+        stmt = stmt.where(MasterIcon.category_type == cat_search)
+        
+    if name:
+        # Search in relevant language or english?
+        # User said "manually make a changes for the language", so maybe search in en?
+        stmt = stmt.where(MasterIcon.name_en.ilike(f"%{name}%"))
+        
+    res = await db.execute(stmt)
+    items = res.scalars().all()
+    
+    # Format Response
+    resp_list = []
+    for i in items:
+        # Select name based on lang
+        display_name = i.name_en
+        if language == 'kn' and i.name_kn:
+            display_name = i.name_kn
+        elif language == 'hi' and i.name_hn:
+            display_name = i.name_hn
+            
+        resp_list.append({
+            "Name": display_name,
+            "image": i.url,
+            "category": i.category_type,
+            "category_id": i.category_id
+        })
+        
+    return resp_list
+
+
+@router.post("/add_icon")
+async def add_icon(
+    category_type: str = Form(..., description="crop, fruit, vegetable"),
+    name_en: str = Form(...),
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Upload image to S3 (public) and add to MasterIcon table.
+    """
+    # 1. Determine Path
+    cat_folder_map = {
+        "crop": "crops",
+        "fruit": "fruit",
+        "vegetable": "vegetables"
+    }
+    
+    folder = cat_folder_map.get(category_type.lower())
+    if not folder:
+        raise HTTPException(status_code=400, detail="Invalid category_type. Use crop, fruit, or vegetable.")
+        
+    # 2. Upload
+    try:
+        ext = file.filename.split('.')[-1]
+        if not ext: ext = "jpg"
+        
+        # Sanitize filename from name_en
+        clean_name = name_en.replace(" ", "_").strip()
+        filename = f"{clean_name}.{ext}"
+        
+        content = await file.read()
+        f_wrapper = BytesUploadFile(content, filename, file.content_type)
+        
+        # Using existing public upload logic, but we want specific folder?
+        # s3_service_public.upload_file uses "dev/original/" by default prefix logic in my head? 
+        # No, checking usage: upload_file(file, prefix)
+        
+        url = await s3_service_public.upload_file(file=f_wrapper, prefix=f"{folder}/")
+        
+        # If url has prefix like dev/original, we might want to ensure it maps to the correct folder user expects.
+        # But s3_service_public.upload_file logic appends the filename to prefix. 
+        # Check if s3_service_public allows custom path fully.
+        
+    except Exception as e:
+        logger.error(f"Upload failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Upload failed: {e}")
+
+    # 3. Generate category_id
+    # Find last id for this category
+    stmt = select(MasterIcon.category_id).where(MasterIcon.category_type == category_type).order_by(MasterIcon.category_id.desc()).limit(1)
+    res = await db.execute(stmt)
+    last_id_str = res.scalar_one_or_none()
+    
+    if last_id_str:
+        # format: crop_001
+        try:
+            prefix, num = last_id_str.split('_')
+            new_num = int(num) + 1
+            new_id = f"{prefix}_{new_num:03d}"
+        except:
+            new_id = f"{category_type}_999" # Fallback
+    else:
+        new_id = f"{category_type}_001"
+        
+    # 4. Save to DB
+    new_icon = MasterIcon(
+        category_id=new_id,
+        category_type=category_type,
+        url=url,
+        name_en=name_en
+    )
+    db.add(new_icon)
+    await db.commit()
+    await db.refresh(new_icon)
+    
+    return {
+        "message": "Icon added successfully",
+        "data": {
+            "category_id": new_icon.category_id,
+            "name": new_icon.name_en,
+            "url": new_icon.url
+        }
+    }
 
 @router.post("/qa/scan", response_model=ScanResponse)
 async def analyze_qa(
@@ -65,7 +169,6 @@ async def analyze_qa(
     user_id: str = Form(...),
     crop_name: str = Form(...),
     category: str = Form(...), # crop, fruit, vegetable
-    language: str = Form("en"),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -76,6 +179,7 @@ async def analyze_qa(
     - If UNHEALTHY -> Creates DB record (PENDING), Returns Report ID.
     - If INVALID -> Error.
     """
+    language = "en"
     
     # 1. Read Image Bytes
     image_bytes = await file.read()
@@ -123,7 +227,8 @@ async def analyze_qa(
             user_input_crop=crop_name,
             language=language,
             original_image_url=None, # Skipped S3
-            analysis_raw=qa_result
+            analysis_raw=qa_result,
+            category=category.lower().rstrip('s') if category.lower() not in ['crop', 'crops'] else 'crop' 
         )
         
     # 5. Unhealthy -> Upload to S3 & Create Partial DB Record
@@ -147,10 +252,10 @@ async def analyze_qa(
     if cat in ["crop", "crops"]:
         report = AnalysisReport(
             user_id=user_id,
-            user_input_crop=crop_name,
+            crop_name=crop_name, # Renamed from user_input_crop, maps to crop_name column
             language=language,
             original_image_url=original_url,
-            detected_disease=disease_name, # Tentative
+            disease_name=disease_name, 
             payment_status="PENDING",
             created_at=current_time 
         )
@@ -197,7 +302,8 @@ async def analyze_qa(
         disease_detected=disease_name,
         user_input_crop=crop_name,
         language=language,
-        original_image_url=original_url
+        original_image_url=original_url,
+        category=cat.rstrip('s') if cat not in ['crop', 'crops'] else 'crop' 
     )
 
 @router.post("/report/generate", response_model=ScanResponse)
@@ -270,7 +376,7 @@ async def generate_full_report(
     try:
         if cat in ["crop", "crops"]:
              # Using user provided name from report
-             crop_name = report.user_input_crop
+             crop_name = report.crop_name
              full_analysis = await gemini_service.analyze_crop(image_bytes, crop_name, report.language, "image/jpeg")
              disease = full_analysis.get("disease_info", {}).get("common_name")
              if disease and disease != "Unknown":
@@ -341,7 +447,7 @@ async def generate_full_report(
          d_sci = d_info.get("scientific_name", "")
          
          # KB Lookup
-         kb_text = knowledge_service.get_treatment(crop_name, d_name, scientific_name=d_sci, language=report.language)
+         kb_text = await knowledge_service.get_treatment(crop_name, d_name, category="crop", db=db, scientific_name=d_sci, language=report.language)
          
          # Logic: Use KB if valid, else "Consult a doctor". 
          # STRICT REQUIREMENT: Do NOT use treatment_from_json/LLM output.
@@ -350,9 +456,9 @@ async def generate_full_report(
          else:
              final_treatment = DEFAULT_TREATMENT
 
-         report.detected_crop = p_info.get("common_name")
-         report.detected_disease = d_name
-         report.pathogen_type = d_info.get("pathogen_type")
+         report.crop_name = p_info.get("common_name")
+         report.disease_name = d_name
+         report.scientific_name = d_info.get("pathogen_type")
          report.severity = str(d_info.get("severity") or d_info.get("severity_stage") or "")
          report.treatment = final_treatment
          
@@ -363,7 +469,7 @@ async def generate_full_report(
          d_name = diag.get("disease_name", "Unknown")
          d_sci = diag.get("pathogen_scientific_name", "")
          
-         kb_text = knowledge_service.get_treatment(crop_name, d_name, scientific_name=d_sci, language=report.language)
+         kb_text = await knowledge_service.get_treatment(crop_name, d_name, category="fruit", db=db, scientific_name=d_sci, language=report.language)
          
          if kb_text and len(kb_text.strip()) > 5:
             final_treatment = kb_text
@@ -371,7 +477,7 @@ async def generate_full_report(
             final_treatment = DEFAULT_TREATMENT
             
          report.disease_name = d_name
-         report.pathogen_scientific_name = d_sci
+         report.scientific_name = d_sci
          report.severity = diag.get("severity_stage")
          report.grade = market.get("grade")
          report.treatment = final_treatment
@@ -383,7 +489,7 @@ async def generate_full_report(
          d_name = d_info.get("common_name", "Unknown")
          d_sci = d_info.get("scientific_name", "")
          
-         kb_text = knowledge_service.get_treatment(crop_name, d_name, scientific_name=d_sci, language=report.language)
+         kb_text = await knowledge_service.get_treatment(crop_name, d_name, category="vegetable", db=db, scientific_name=d_sci, language=report.language)
          
          if kb_text and len(kb_text.strip()) > 5:
             final_treatment = kb_text
@@ -407,13 +513,14 @@ async def generate_full_report(
         id=report.uid,
         user_id=user_id,
         created_at=report.created_at,
-        disease_detected=report.detected_disease if cat == 'crop' else report.disease_name,
-        user_input_crop=crop_name,
+        disease_detected=report.disease_name if cat == 'crop' else report.disease_name,
+        user_input_crop=crop_name, # crop_name var is set above from report.crop_name # crop_name var is set above from report.crop_name
         language=report.language,
         kb_treatment=kb_text,
         analysis_raw=full_analysis,
         original_image_url=report.original_image_url,
-        bbox_image_url=processed_url
+        bbox_image_url=processed_url,
+        category=cat.rstrip('s') if cat not in ['crop', 'crops'] else 'crop'
     )
     
 @router.get("/report/details", response_model=ScanResponse)
@@ -479,13 +586,15 @@ async def get_report_details(
         "original_image_url": report.original_image_url,
         "bbox_image_url": report.bbox_image_url,
         "language": report.language,
-        "kb_treatment": report.treatment # assuming 'treatment' column = local KB text
+        "language": report.language,
+        "kb_treatment": report.treatment, # assuming 'treatment' column = local KB text
+        "category": tx.analysis_type
     }
     
     # Specifics
     if tx.analysis_type == 'crop':
-        resp_args["user_input_crop"] = report.user_input_crop
-        resp_args["disease_detected"] = report.detected_disease
+        resp_args["user_input_crop"] = report.crop_name
+        resp_args["disease_detected"] = report.disease_name
     elif tx.analysis_type == 'fruit':
         resp_args["user_input_crop"] = report.fruit_name
         resp_args["disease_detected"] = report.disease_name
@@ -496,8 +605,6 @@ async def get_report_details(
     return ScanResponse(**resp_args)
 
 
-
-@router.post("/crop_scan", response_model=ScanResponse)
 async def analyze_crop(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
@@ -572,7 +679,7 @@ async def analyze_crop(
     kb_text = ""
     dis_sci_name = disease_info.get("scientific_name", "")
     if disease_name and disease_name.lower() != "unknown":
-        kb_text = knowledge_service.get_treatment(crop_name, disease_name, scientific_name=dis_sci_name, language=language)
+        kb_text = await knowledge_service.get_treatment(crop_name, disease_name, category="crop", db=db, scientific_name=dis_sci_name, language=language)
     
     # Healthy Heuristic
     lower_name = str(disease_name).lower().strip()
@@ -605,13 +712,11 @@ async def analyze_crop(
              logger.error(f"❌ Bounding Box stage failed: {e}", exc_info=True)
 
     # 6. Save to DB & Return
-    # 6. Save to DB & Return
     return await _save_crop_and_respond(
         db, user_id, crop_name, language,
         original_url, processed_url, disease_name, kb_text, analysis_dict, is_healthy, plant_info, disease_info
     )
 
-@router.post("/vegetable_scan", response_model=ScanResponse)
 async def analyze_vegetable(
     file: UploadFile = File(...),
     user_id: str = Form(..., description="User ID string (e.g. users_xxx)"),
@@ -672,7 +777,7 @@ async def analyze_vegetable(
     dis_sci_name = disease_info.get("scientific_name", "")
     
     if not is_healthy and disease_name and disease_name.lower() != "unknown":
-         kb_text = knowledge_service.get_treatment(crop_name, disease_name, scientific_name=dis_sci_name, language=language)
+         kb_text = await knowledge_service.get_treatment(crop_name, disease_name, category="vegetable", db=db, scientific_name=dis_sci_name, language=language)
 
     processed_url = None
 
@@ -705,7 +810,7 @@ async def analyze_vegetable(
     )
 
 
-@router.post("/fruit_scan", response_model=ScanResponse)
+
 async def analyze_fruit(
     file: UploadFile = File(...),
     user_id: str = Form(..., description="User ID string (e.g. users_xxx)"),
@@ -766,7 +871,7 @@ async def analyze_fruit(
     sci_name = diagnosis.get("pathogen_scientific_name", "")
     
     if not is_healthy and disease_name and disease_name.lower() != "unknown":
-         kb_text = knowledge_service.get_treatment(crop_name, disease_name, scientific_name=sci_name, language=language)
+         kb_text = await knowledge_service.get_treatment(crop_name, disease_name, db=db, scientific_name=sci_name, language=language)
     
     processed_url = None
 
@@ -862,11 +967,11 @@ async def _save_crop_and_respond(
     if not is_healthy:
         db_report = AnalysisReport(
             user_id=user_id,
-            user_input_crop=crop_name,
+            crop_name=crop_name, # Changed from user_input_crop, maps to crop_name
             language=language,
-            detected_crop=plant_info.get("common_name"),
-            detected_disease=disease_name,
-            pathogen_type=disease_info.get("pathogen_type"),
+            # detected_crop=plant_info.get("common_name"), # Removed as detected_crop -> crop_name which we just set
+            disease_name=disease_name, # Renamed from detected_disease
+            scientific_name=disease_info.get("pathogen_type"),
             severity=str(disease_info.get("severity") or disease_info.get("severity_stage")),
             treatment=kb_text,
             analysis_raw=analysis_raw,
@@ -935,7 +1040,7 @@ async def _save_fruit_and_respond(
             fruit_name=fruit_info.get("name"),
             language=language,
             disease_name=disease_name,
-            pathogen_scientific_name=diagnosis.get("pathogen_scientific_name"),
+            scientific_name=diagnosis.get("pathogen_scientific_name"),
             severity=diagnosis.get("severity_stage"), # Using stage as severity
             grade=market.get("grade"),
             treatment=final_treatment,
