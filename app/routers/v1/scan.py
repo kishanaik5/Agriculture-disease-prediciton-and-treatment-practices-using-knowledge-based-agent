@@ -85,6 +85,81 @@ async def get_all_items(language: str = "en", name: Optional[str] = None, catego
     return resp_list
 
 
+@router.get("/all_reports", tags=["Show Details"])
+async def get_all_reports(
+    user_id: str,
+    language: str, # Mandatory
+    category: Optional[str] = None, # Optional
+    limit: int = 10,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get all report IDs for a user, filtered by language and optionally category.
+    Results are ordered by created_at DESC.
+    """
+    stmt = None
+    
+    # Normalize category if present
+    cat = None
+    if category:
+        cat = category.lower().strip()
+        if cat.endswith('s') and cat != "crops": 
+            cat = cat[:-1]
+        elif cat == "crops":
+            cat = "crop"
+    
+    if language == "en":
+        if cat:
+            # Specific Category
+            model = None
+            if cat == "crop":
+                model = AnalysisReport
+            elif cat == "fruit":
+                model = FruitAnalysis
+            elif cat == "vegetable":
+                model = VegetableAnalysis
+            else:
+                return []
+                
+            stmt = select(model.uid).where(model.user_id == user_id).order_by(model.created_at.desc())
+        else:
+            # UNION ALL of all 3 tables
+            # We select uid and created_at to order by created_at
+            
+            s1 = select(AnalysisReport.uid, AnalysisReport.created_at).where(AnalysisReport.user_id == user_id)
+            s2 = select(FruitAnalysis.uid, FruitAnalysis.created_at).where(FruitAnalysis.user_id == user_id)
+            s3 = select(VegetableAnalysis.uid, VegetableAnalysis.created_at).where(VegetableAnalysis.user_id == user_id)
+            
+            from sqlalchemy import union_all, literal_column
+            
+            # Combine
+            u_stmt = union_all(s1, s2, s3).subquery()
+            
+            # Select from union and order
+            stmt = select(u_stmt.c.uid).order_by(u_stmt.c.created_at.desc())
+            
+    else:
+        # Translated Analysis Report
+        stmt = select(TranslatedAnalysisReport.uid).where(
+            TranslatedAnalysisReport.user_id == user_id,
+            TranslatedAnalysisReport.language == language
+        )
+        
+        if cat:
+            stmt = stmt.where(TranslatedAnalysisReport.category_type == cat)
+            
+        stmt = stmt.order_by(TranslatedAnalysisReport.created_at.desc())
+        
+    # Apply Limit and Offset
+    stmt = stmt.limit(limit).offset(offset)
+    
+    res = await db.execute(stmt)
+    report_ids = res.scalars().all()
+    
+    return report_ids
+
+
 @router.get("/get_price", tags=["Show Details"])
 async def get_price(category: str, db: AsyncSession = Depends(get_db)):
     """
@@ -435,7 +510,7 @@ async def _core_process_generation(
             if cat in ["crop", "crops"]:
                  crop_name = report.crop_name
                  full_analysis = await gemini_service.analyze_crop(image_bytes, crop_name, "en", "image/jpeg")
-                 disease = full_analysis.get("disease_info", {}).get("common_name")
+                 disease = full_analysis.get("disease_info", {}).get("disease_name")
                  if disease and disease != "Unknown":
                      bbox_list = await gemini_service.generate_bbox_crop(image_bytes, disease, "image/jpeg")
                      
@@ -449,7 +524,7 @@ async def _core_process_generation(
             elif cat in ["vegetable", "vegetables"]:
                  crop_name = report.vegetable_name
                  full_analysis = await gemini_service.analyze_vegetable(image_bytes, crop_name, "en", "image/jpeg")
-                 disease = full_analysis.get("disease_info", {}).get("common_name")
+                 disease = full_analysis.get("disease_info", {}).get("disease_name")
                  if disease:
                      bbox_list = await gemini_service.generate_bbox_vegetable(image_bytes, disease, "image/jpeg")
                      
@@ -485,7 +560,7 @@ async def _core_process_generation(
         if cat in ["crop", "crops"]:
              d_info = full_analysis.get("disease_info", {})
              p_info = full_analysis.get("plant_info", {})
-             d_name = d_info.get("common_name", "Unknown")
+             d_name = d_info.get("disease_name", "Unknown")
              d_sci = d_info.get("scientific_name", "")
              
              kb_text = await knowledge_service.get_treatment(report.crop_name, d_name, category="crop", db=db, scientific_name=d_sci, language="en")
@@ -501,7 +576,7 @@ async def _core_process_generation(
              diag = full_analysis.get("diagnosis", {})
              market = full_analysis.get("market_quality", {})
              d_name = diag.get("disease_name", "Unknown")
-             d_sci = full_analysis.get("pathogen_scientific_name", "")
+             d_sci = diag.get("scientific_name", "")
              
              kb_text = await knowledge_service.get_treatment(report.fruit_name, d_name, category="fruit", db=db, scientific_name=d_sci, language="en")
              final_treatment = kb_text if (kb_text and len(kb_text.strip()) > 5) else DEFAULT_TREATMENT
@@ -515,7 +590,7 @@ async def _core_process_generation(
         elif cat in ["vegetable", "vegetables"]:
              d_info = full_analysis.get("disease_info", {})
              market = full_analysis.get("marketability", {})
-             d_name = d_info.get("common_name", "Unknown")
+             d_name = d_info.get("disease_name", "Unknown")
              d_sci = d_info.get("scientific_name", "")
              
              kb_text = await knowledge_service.get_treatment(report.vegetable_name, d_name, category="vegetable", db=db, scientific_name=d_sci, language="en")

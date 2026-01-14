@@ -147,7 +147,7 @@ class GeminiService:
                 "scientific_name": ""
             }},
             "disease_info": {{
-                "common_name": "",
+                "disease_name": "",
                 "scientific_name": "",
                 "pathogen_type": "",
                 "cause": "",
@@ -268,7 +268,7 @@ class GeminiService:
             "common_name": ""
           }},
           "disease_info": {{
-            "common_name": "",
+            "disease_name": "",
             "scientific_name": "",
             "pathogen_type": "",
             "cause": "",
@@ -316,7 +316,7 @@ class GeminiService:
         [LANGUAGE INSTRUCTION]: 
         - JSON KEYS must remain exactly as defined (English)
         - JSON VALUES should be in {lang_target}
-        - Scientific names (pathogen_scientific_name) should remain in Latin. For physiological disorders, use the English technical term (e.g., "Calcium Deficiency" or "Blossom End Rot").
+        - Scientific names (scientific_name) should remain in Latin. For physiological disorders, use the English technical term (e.g., "Calcium Deficiency" or "Blossom End Rot").
 
         [CONTEXT]:
         User claims this is: {crop_name}
@@ -376,7 +376,7 @@ class GeminiService:
         
         "disease_name": "",
         
-        "pathogen_scientific_name": "",
+        "scientific_name": "",
         
         "type": "",
         
@@ -590,7 +590,6 @@ class GeminiService:
         3. DO NOT translate:
            - Keys (must remain English)
            - 'scientific_name' (keep Latin/Scientific)
-           - 'pathogen_scientific_name'
            - logical constants like 'is_valid_crop'
            - URLs, IDs
         

@@ -97,7 +97,7 @@ async def process_crop_scan_async(
         
         # 4. Process disease if detected
         disease_info = analysis_dict.get("disease_info", {})
-        disease_name = disease_info.get("common_name", "Unknown")
+        disease_name = disease_info.get("disease_name", "Unknown")
         
         kb_text = ""
         if disease_name and disease_name.lower() != "unknown":
