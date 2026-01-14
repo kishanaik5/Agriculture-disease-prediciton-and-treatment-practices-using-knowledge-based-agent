@@ -52,3 +52,8 @@ test_db_connection.py
 run_migration.py
 run_alembic.py
 log-events-viewer-result (2).csv
+
+# Large Resource Folders
+s3_file_upload/
+knowledge_based_folder/
+icons_folder/
