@@ -23,7 +23,7 @@ class OrderCreateRequest(BaseModel):
     analysis_report_uid: str = Field(..., description="UID of the report (Context ID)")
     analysis_type: str = Field(..., description="Type of analysis (crop, fruit, vegetable)")
     extra_meta: Dict[str, Any] = Field(default_factory=dict, description="Additional meta info like crop_name")
-    coupon: Optional[str] = None
+    coupon: Optional[str] = ""
 
 class OrderResponse(BaseModel):
     order_id: str
@@ -48,7 +48,7 @@ def get_context_type(analysis_type: str) -> str:
     }
     return mapping.get(analysis_type.lower(), f"{analysis_type}_report")
 
-@router.post("/create-order", response_model=OrderResponse)
+@router.post("/create-order", response_model=OrderResponse, tags=["Payments"])
 async def create_order(payload: OrderCreateRequest):
     async with httpx.AsyncClient() as client:
         try:
@@ -229,7 +229,7 @@ async def create_order(payload: OrderCreateRequest):
             raise HTTPException(status_code=500, detail=f"Order Creation Failed: {str(e)}")
 
 
-@router.get("/verify/{order_id}")
+@router.get("/verify/{order_id}", tags=["Payments"])
 async def verify_payment(order_id: str):
     """
     Verify payment status from external service and update local PaymentTransaction.

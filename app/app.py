@@ -23,7 +23,7 @@ from app.config import init_settings
 settings = init_settings()
 from app.routers.v1.scan import router as scan_router
 from app.routers.v1.async_scan import router as async_scan_router
-from app.services.redis_manager import task_manager
+# from app.services.redis_manager import task_manager # Removed Redis dependency
 from SharedBackend.managers.base import BaseSchema
 from app.database import engine
 from sqlalchemy import text
@@ -31,9 +31,20 @@ import asyncio
 
 db_ready = False
 
+
+tags_metadata = [
+    {"name": "Show Details", "description": "Get item details and prices."},
+    {"name": "QA_Scan", "description": "Quality Assurance Scan."},
+    {"name": "Payments", "description": "Payment processing."},
+    {"name": "Generate Report", "description": "Report generation and status."},
+    {"name": "Translation", "description": "Translation services."},
+    {"name": "Admin Section", "description": "Administrative actions."}
+]
+
 app = FastAPI(
     title=settings.PROJECT_NAME,
-    openapi_url=f"{settings.API_V1_STR}/openapi.json"
+    openapi_url=f"{settings.API_V1_STR}/openapi.json",
+    openapi_tags=tags_metadata
 )
 
 from fastapi.middleware.cors import CORSMiddleware
@@ -111,8 +122,7 @@ async def startup_event():
 async def health_check():
     health_status = {
         "status": "healthy", 
-        "database": "connected" if db_ready else "disconnected",
-        "redis": "connected" if task_manager.redis else "disconnected"
+        "database": "connected" if db_ready else "disconnected"
     }
     
     if not db_ready:
@@ -125,8 +135,8 @@ async def health_check():
     return health_status
 
 # Include Routers
-app.include_router(scan_router, prefix=settings.API_V1_STR, tags=["Scan"])
-app.include_router(async_scan_router, prefix=settings.API_V1_STR, tags=["Async Scan"])
+app.include_router(scan_router, prefix=settings.API_V1_STR)
+app.include_router(async_scan_router, prefix=settings.API_V1_STR)
 from app.routers.v1.payment import router as payment_router
 app.include_router(payment_router, prefix=settings.API_V1_STR)
 

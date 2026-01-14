@@ -55,8 +55,7 @@ class Settings(BaseSettings):
     S3_BUCKET_PRIVATE: str
     S3_BUCKET_PUBLIC: str
     
-    # Redis Configuration for Async Tasks
-    REDIS_URL: str = "redis://localhost:6379"
+
     
     # Application Configuration
     ENV_MODE: str = "dev"

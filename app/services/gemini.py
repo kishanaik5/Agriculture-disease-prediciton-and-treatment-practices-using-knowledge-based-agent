@@ -529,28 +529,46 @@ class GeminiService:
 
     async def _generate_bbox_response(self, prompt: str, image_data: bytes, mime_type: str) -> list:
         content_part = types.Part.from_bytes(data=image_data, mime_type=mime_type)
-        try:
-            response = await self.client.aio.models.generate_content(
-                model=self.bbox_model_name,
-                contents=[prompt, content_part],
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    temperature=0.0,
-                    max_output_tokens=30000 
-                )
-            )
-            logger.info(f"RAW BBOX RESPONSE: {response.text}")
-            
+        
+        # Helper to try generation
+        async def try_model(model_name):
             try:
+                response = await self.client.aio.models.generate_content(
+                    model=model_name,
+                    contents=[prompt, content_part],
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        temperature=0.0,
+                        max_output_tokens=8192 # Increased for complex boxes
+                    )
+                )
+                logger.info(f"RAW BBOX RESPONSE ({model_name}): {response.text}")
                 data = json.loads(response.text)
                 detections = data.get("detections", [])
                 boxes = [d.get("box_2d") for d in detections if d.get("box_2d")]
                 return boxes
-            except json.JSONDecodeError:
-                return []
-        except Exception as e:
-            logger.error(f"Detection failed: {e}")
-            return []
+            except Exception as e:
+                logger.warning(f"BBox generation with {model_name} failed: {e}")
+                return None
+
+        # 1. Try Primary BBox Model (e.g., gemini-1.5-pro-latest or configured value)
+        result = await try_model(self.bbox_model_name)
+        if result is not None:
+            return result
+            
+        # 2. Fallback to Standard Pro Model
+        logger.info("Falling back to Gemini Pro for BBox...")
+        result_fallback = await try_model(self.pro_model)
+        if result_fallback is not None:
+             return result_fallback
+             
+        # 3. Fallback to Flash (Last resort, might be less accurate but returns Someting)
+        logger.info("Falling back to Gemini Flash for BBox...")
+        result_flash = await try_model(self.flash_model)
+        if result_flash is not None:
+             return result_flash
+
+        return []
 
     async def translate_report_content(self, data: dict, target_language: str) -> dict:
         """

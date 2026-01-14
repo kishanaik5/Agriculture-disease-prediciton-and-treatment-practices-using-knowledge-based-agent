@@ -12,6 +12,7 @@ class AnalysisReport(BaseSchema):
     user_id = Column(String(50), nullable=False, index=True) 
 
     language = Column(String(10), default="en") 
+    desired_language_output = Column(String(10), default="en") 
     
     crop_name = Column(String(255), nullable=True)
     disease_name = Column(String(255), nullable=True)
@@ -36,6 +37,7 @@ class FruitAnalysis(BaseSchema):
     user_id = Column(String(50), nullable=False, index=True)
     fruit_name = Column(String(255), nullable=True)
     language = Column(String(10), default="en")
+    desired_language_output = Column(String(10), default="en")
     
     # Diagnosis
     disease_name = Column(String(255), nullable=True)
@@ -63,6 +65,7 @@ class VegetableAnalysis(BaseSchema):
     user_id = Column(String(50), nullable=False, index=True)
     vegetable_name = Column(String(255), nullable=True)
     language = Column(String(10), default="en")
+    desired_language_output = Column(String(10), default="en")
     
     # Diagnosis
     disease_name = Column(String(255), nullable=True)
@@ -158,4 +161,7 @@ class MasterIcon(BaseSchema):
     name_en = Column(String(255), nullable=True)
     name_kn = Column(String(255), nullable=True)
     name_hn = Column(String(255), nullable=True)
+
+
+
 

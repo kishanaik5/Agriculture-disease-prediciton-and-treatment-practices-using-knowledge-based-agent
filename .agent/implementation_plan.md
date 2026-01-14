@@ -1,45 +1,68 @@
-# Implementation Plan - Refine Analysis & Master Data
+# Implementation Plan: Async Report Generation
 
-This conversation focused on refining the analysis report structure, translation logic, and updating the master icons database.
+## Objective
+Implement an asynchronous version to the report generation endpoint to prevent timeout issues during the compute-intensive analysis and translation phases. This will strictly follow the established `QA -> Payment -> Generate` workflow.
 
-## User Review Required
+## Current Workflow & Issues
+1.  **QA Scan**: Uploads image, checks disease. Stores initial record with `payment_status='PENDING'`. Returns `report_id`.
+2.  **Payment**: User pays. Status updates to `SUCCESS`.
+3.  **Generate (Current Sync)**: User calls `POST /report/generate`.
+    *   **Issue**: This step performs S3 Download + Gemini Analysis (English) + BBox Generation + S3 Upload + DB Update + Optional Translation. This can take 30-60s, leading to client timeouts.
 
-> [!IMPORTANT]
-> The `master_icons` table has been truncated and re-seeded with 341 records from the merged CSV. Please verify that the icons are appearing correctly in the frontend application.
+## Proposed Solution
+Introduce `POST /report/generate_async` and refactor the logic to be shared with the synchronous endpoint.
 
-- **Translation Response Structure:** The translation endpoint now returns a JSON structure identical to the English report (`ScanResponse` schema), with `report_uid` mapped to `id` and `item_name` to `user_input_crop`.
-- **Category Filtering:** Knowledge base lookups (`get_treatment`) now strictly filter by `category` (crop/fruit/vegetable) to prevent ambiguity.
+### 1. Core Logic Extraction (`_core_process_generation`)
+A shared internal function that:
+*   Takes `report_id`, `language`, `db_session`.
+*   Downloads image from S3.
+*   Performs Gemini Analysis (English).
+*   Updates `AnalysisReport` (or Fruit/Veg tables) with English data.
+*   Sets `payment_status='SUCCESS'`.
+*   **Translation**: If `language != 'en'`, triggers `TranslationService` to generate translated report.
+*   **Output**: Returns the final JSON response (including `available_lang` metadata).
+*   **Progress Tracking**: Updates Redis `task_manager` with steps (e.g., "Analyzing", "Translating") if a `task_id` is provided.
 
-## Proposed Changes
+### 2. Endpoints
+#### A. Synchronous (Existing, Refactored)
+`POST /api/v1/report/generate`
+*   **Behavior**: Calls `_core_process_generation` and waits for result.
+*   **Use Case**: Quick server responses or clients that can wait.
 
-### Backend Logic
+#### B. Asynchronous (New)
+`POST /api/v1/report/generate_async`
+*   **Input**: Same as sync (`report_id`, `user_id`, `language`...).
+*   **Behavior**: 
+    1.  Verifies payment (Fail fast).
+    2.  Generates `task_id`.
+    3.  Queues background task.
+    4.  Returns `{ "task_id": "...", "status": "queued" }`.
+*   **Use Case**: Production clients to avoid timeouts.
 
-#### `app/routers/v1/scan.py`
-- [x] **Hardcoded Language:** Removed `language` form parameter from `/qa/scan` and hardcoded it to "en".
-- [x] **Category Field:** Added `category` field (crop, fruit, vegetable) to the `ScanResponse` object and populated it in all analysis endpoints.
+#### C. Status Polling
+`GET /api/v1/report/status/{task_id}`
+*   Returns task status from Redis.
+*   **Response Stages**:
+    *   `queued`
+    *   `processing`: Returns `{ "progress": 50, "stage": "Analysis Complete" }`
+    *   `completed`: Returns `{ "result": <Final Report JSON> }`
+    *   `failed`: Returns `{ "error": "..." }`
 
-#### `app/routers/v1/translation.py`
-- [x] **Standardized Response:**  Manually constructed the return dictionary in `translate_report` and `get_report` to match the exact JSON structure of the English report (removing internal DB fields like `payment_status`).
-- [x] **Localized Treatment:** Implemented a call to `knowledge_service.get_treatment` using the *translated* crop and disease names to fetch localized treatment methods from the KB.
+## Implementation Steps
+1.  **Refactor `scan.py`**:
+    *   Extract logic from `generate_full_report` into `_core_process_generation`.
+    *   Implement `background_generation_worker` handler.
+    *   Update `generate_full_report` to use the core function.
+    *   Add `generate_report_async` endpoint.
+    *   Add `get_generation_status` endpoint.
+2.  **Database & Redis**:
+    *   Ensure `task_manager` (Redis) is active and imported.
+    *   Ensure `SessionLocal` is used for background tasks (to avoid detached session errors).
+3.  **Validation**:
+    *   Verify `available_lang` is correctly populated in both Sync and Async results.
+    *   Verify `desired_language_output` is respected.
 
-#### `app/services/knowledge.py`
-- [x] **Enhanced Lookup:** Updated `get_treatment` to accept `category` and prioritize `scientific_name` for more accurate matches. Added case-insensitive matching for all fields.
-
-### Database Updates
-
-#### `master_icons`
-- [x] **Data Merge:** Merged updated icon data (with Kannada/Hindi names) into `master_data.csv`, adding new items and resolving duplicate IDs.
-- [x] **Re-seeding:** Created and ran scripts (`merge_csvs.py`, `fix_and_merge_csv.py`, `reset_icons_db.py`) to truncate the `master_icons` table and populate it with the cleaned dataset (341 records).
-
-### Deployment
-- [x] **Git Push:** Pushed all backend changes and migration scripts to `origin/dev`. Excluded large asset folders (`s3_file_upload`, `icons_folder`, `knowledge_based_folder`) from version control.
-
-## Verification Plan
-
-### Automated Tests
-- [ ] **Translation Flow:** Run `verify_translation_flow.py` (if available or created) to ensure that translated reports contain the correct `category` and `kb_treatment`.
-- [ ] **Icon Data:** Query the `master_icons` table to confirm unique `category_id`s and presence of localized names.
-
-### Manual Verification
-- [x] **QA Scan:** Verified `/qa/scan` accepts request without `language` optional param (default logic handled internally) and returns `category`.
-- [ ] **Treatment Lookup:** Check a known disease (e.g., "Early Blight") in a translated report to see if the Kannada/Hindi treatment text is correctly appended.
+## Verification
+*   User will call `POST /report/generate_async` with `kn`.
+*   User will poll `/report/status/{task_id}`.
+*   Expected result: Task completes, returns Kannada report JSON with `available_lang: {'en': True, 'kn': True}`.

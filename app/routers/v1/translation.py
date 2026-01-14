@@ -24,7 +24,7 @@ class TranslateRequest(BaseModel):
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-@router.post("/translate_report")
+@router.post("/translate_report", tags=["Translation"])
 async def translate_report(request: TranslateRequest, db: AsyncSession = Depends(get_db)):
     """
     Translates an existing analysis report into the target language.
@@ -165,7 +165,7 @@ async def translate_report(request: TranslateRequest, db: AsyncSession = Depends
         "analysis_raw": new_report.analysis_raw
     }
 
-@router.get("/report")
+@router.get("/report", tags=["Translation"])
 async def get_report(report_id: str, language: str = 'en', db: AsyncSession = Depends(get_db)):
     """
     Retrieves a report in the specified language.

@@ -84,5 +84,6 @@ class ScanResponse(BaseModel):
     # Full Analysis
     kb_treatment: Optional[str] = Field(None, description="Verified treatment from local Knowledge Base")
     analysis_raw: Optional[Dict[str, Any]] = None
+    available_lang: Optional[Dict[str, Any]] = None
 
     model_config = {"from_attributes": True, "exclude_none": True}

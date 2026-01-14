@@ -1,12 +1,14 @@
 from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db, SessionLocal
-from app.models.scan import AnalysisReport
+from app.models.scan import AnalysisReport, FruitAnalysis, VegetableAnalysis
+# REMOVED AsyncJob, Redis
+from sqlalchemy import select
 from app.schemas.scan import ScanResponse, AnalysisResult
 from app.services.gemini import gemini_service
 from app.services.s3 import s3_service_public, s3_service_private
 from app.services.image import image_service
-from app.services.redis_manager import task_manager
+# from app.services.redis_manager import task_manager # Removed
 import uuid
 import logging
 import io
@@ -45,7 +47,20 @@ async def process_crop_scan_async(
     
     db = SessionLocal()
     try:
-        await task_manager.set_task_status(task_id, "processing", {"progress": 10})
+        # await task_manager.set_task_status(task_id, "processing", {"progress": 10})
+        # Helper to update AsyncJob
+        async def _update_status(status, details):
+            stmt = select(AsyncJob).where(AsyncJob.job_id == task_id)
+            res = await db.execute(stmt)
+            job = res.scalars().first()
+            if job:
+                job.status = status
+                if details: 
+                    job.details = details
+                    if "progress" in details: job.progress = details["progress"]
+                await db.commit()
+                
+        await _update_status("processing", {"progress": 10})
         
         # 1. Analyze Image
         category = knowledge_service.get_crop_category(crop_name)
@@ -56,7 +71,7 @@ async def process_crop_scan_async(
         else:
             analysis_dict = await gemini_service.analyze_crop(image_bytes, crop_name, language=language, mime_type=content_type)
             
-        await task_manager.set_task_status(task_id, "processing", {"progress": 30})
+        await _update_status("processing", {"progress": 30})
         
         # 2. Validation
         plant_info = analysis_dict.get("plant_info", {})
@@ -68,17 +83,17 @@ async def process_crop_scan_async(
             if language == 'kn':
                 error_msg = "ದಯವಿಟ್ಟು ಸರಿಯಾದ ಬೆಳೆಯನ್ನು ಆಯ್ಕೆ ಮಾಡಿ ಮತ್ತು ಚಿತ್ರವನ್ನು ಸರಿಯಾಗಿ ಅಪ್‌ಲೋಡ್ ಮಾಡಿ."
             
-            await task_manager.set_task_status(task_id, "failed", {"error": error_msg})
+            await _update_status("failed", {"error": error_msg})
             return
 
-        await task_manager.set_task_status(task_id, "processing", {"progress": 50})
+        await _update_status("processing", {"progress": 50})
         
         # 3. Upload Original
         file_wrapper = BytesUploadFile(image_bytes, filename, content_type)
         # CHANGED: Use Public Bucket for original images as per new requirement
         original_url = await s3_service_public.upload_file(file=file_wrapper, prefix="dev/original/")
         
-        await task_manager.set_task_status(task_id, "processing", {"progress": 60})
+        await _update_status("processing", {"progress": 60})
         
         # 4. Process disease if detected
         disease_info = analysis_dict.get("disease_info", {})
@@ -100,7 +115,7 @@ async def process_crop_scan_async(
         
         # Bounding boxes for diseased crops
         if not is_healthy and disease_name:
-            await task_manager.set_task_status(task_id, "processing", {"progress": 70})
+            await _update_status("processing", {"progress": 70})
             
             if is_produce:
                 boxes = await gemini_service.generate_bbox_vegetable(image_bytes, disease_name, mime_type=content_type)
@@ -120,7 +135,7 @@ async def process_crop_scan_async(
                 processed_wrapper = BytesUploadFile(processed_image_bytes, f"processed_{filename}", "image/jpeg")
                 processed_url = await s3_service_public.upload_file(file=processed_wrapper, prefix="dev/processed/")
         
-        await task_manager.set_task_status(task_id, "processing", {"progress": 90})
+        await _update_status("processing", {"progress": 90})
         
         # 5. Save to DB
         current_time = datetime.now()
@@ -138,38 +153,101 @@ async def process_crop_scan_async(
         }
 
         if not is_healthy:
-            db_report = AnalysisReport(
-                user_id=user_id,
-                crop_name=crop_name, # Renamed from user_input_crop maps to crop_name
-                language=language,
-                # is_mixed_cropping and acres_of_land removed from DB
-                # detected_crop=plant_info.get("common_name"), # Merged into crop_name or dropped if we trust user input. Logic needs to align.
-                # If we want to store detected crop separately, we need a column. But we are renaming detected_crop -> crop_name.
-                # So we should decide whether to store user input or detected name. 
-                # Scan.py was using user input for crop_name. I will stick to user input for crop_name for consistency.
-                disease_name=disease_name, # Renamed from detected_disease
-                scientific_name=disease_info.get("pathogen_type"),
-                severity=str(analysis_dict.get("disease_info", {}).get("severity")),
-                treatment=kb_text,
-                analysis_raw=analysis_dict,
-                created_at=current_time,
-                original_image_url=original_url,
-                bbox_image_url=processed_url
-            )
+            # Determine correct table based on category from knowledge service
+            cat_check = category.lower().rstrip('s') # fruit, vegetable, crop
+            if cat_check == "fruits": cat_check = "fruit" # handle 'fruits' -> 'fruit' logic specifically if needed
+
+            if cat_check == "fruit":
+                 db_report = FruitAnalysis(
+                    user_id=user_id,
+                    fruit_name=crop_name, # Logic maps crop_name to fruit_name
+                    language="en",
+                    desired_language_output=language,
+                    disease_name=disease_name,
+                    scientific_name=disease_info.get("pathogen_scientific_name") or disease_info.get("scientific_name"),
+                    severity=str(analysis_dict.get("diagnosis", {}).get("severity_stage") or analysis_dict.get("disease_info", {}).get("severity")), 
+                    grade=analysis_dict.get("market_quality", {}).get("grade"),
+                    treatment=kb_text,
+                    analysis_raw=analysis_dict,
+                    created_at=current_time,
+                    original_image_url=original_url,
+                    bbox_image_url=processed_url,
+                    payment_status="PENDING"
+                 )
+            elif cat_check == "vegetable":
+                 db_report = VegetableAnalysis(
+                    user_id=user_id,
+                    vegetable_name=crop_name,
+                    language="en",
+                    desired_language_output=language,
+                    disease_name=disease_name,
+                    scientific_name=disease_info.get("scientific_name"),
+                    severity=str(analysis_dict.get("disease_info", {}).get("severity")),
+                    treatment=kb_text,
+                    analysis_raw=analysis_dict,
+                    created_at=current_time,
+                    original_image_url=original_url,
+                    bbox_image_url=processed_url,
+                    payment_status="PENDING"
+                 )
+            else:
+                db_report = AnalysisReport(
+                    user_id=user_id,
+                    crop_name=crop_name, 
+                    language="en",
+                    desired_language_output=language,
+                    disease_name=disease_name, 
+                    scientific_name=disease_info.get("pathogen_type"),
+                    severity=str(analysis_dict.get("disease_info", {}).get("severity")),
+                    treatment=kb_text,
+                    analysis_raw=analysis_dict,
+                    created_at=current_time,
+                    original_image_url=original_url,
+                    bbox_image_url=processed_url,
+                    payment_status="PENDING"
+                )
             
             db.add(db_report)
             await db.commit()
             await db.refresh(db_report)
+
+            # Translation Logic (Async)
+            if language != "en":
+                from app.services.translation_service import translation_service
+                try:
+                    # We are in sync context wrapper (run_in_threadpool potentially or native async). 
+                    # create_task is safer if we want parallel, but here we want result for task status.
+                    async_args = {
+                        "db": db, 
+                        "report_id": db_report.uid, 
+                        "user_id": user_id, 
+                        "target_language": language
+                    }
+                    translated_report = await translation_service.get_or_create_translation(**async_args)
+                    
+                    # Update response data with translation
+                    response_data.update({
+                        "disease_detected": translated_report.disease_name,
+                        "user_input_crop": translated_report.item_name,
+                        "language": translated_report.language,
+                        "kb_treatment": translated_report.treatment,
+                        "analysis_raw": translated_report.analysis_raw
+                    })
+                except Exception as e:
+                    logger.error(f"Async Translation failed: {e}")
+                    # Don't fail the whole task, just return English with warning?
+                    # Or set error? User prefers completed.
+                    pass
             
             response_data["id"] = db_report.uid
         else:
             response_data["id"] = "0"
         
-        await task_manager.set_task_status(task_id, "completed", {"progress": 100, "result": response_data})
+        await _update_status("completed", {"progress": 100, "result": response_data})
         
     except Exception as e:
         logger.error(f"Background processing failed for task {task_id}: {e}")
-        await task_manager.set_task_status(task_id, "failed", {"error": str(e)})
+        await _update_status("failed", {"error": str(e)})
     finally:
         await db.close()
 
@@ -184,57 +262,10 @@ async def analyze_crop_async(
     is_mixed_cropping: bool = Form(False),
     acres_of_land: Optional[str] = Form(None)
 ):
-    """
-    Async version of crop_scan endpoint.
-    Returns immediately with a task_id.
-    Client polls /crop_scan_status/{task_id} for results.
-    
-    No timeout issues - processes in background.
-    """
-    task_id = str(uuid.uuid4())
-    
-    # Read image immediately
-    image_bytes = await file.read()
-    
-    # Initialize task in Redis
-    await task_manager.set_task_status(task_id, "queued", {"progress": 0})
-    
-    # Start background task
-    background_tasks.add_task(
-        process_crop_scan_async,
-        task_id=task_id,
-        image_bytes=image_bytes,
-        filename=file.filename,
-        content_type=file.content_type,
-        user_id=user_id,
-        crop_name=crop_name,
-        language=language,
-        is_mixed_cropping=is_mixed_cropping,
-        acres_of_land=acres_of_land
-    )
-    
-    return {
-        "task_id": task_id,
-        "status": "queued",
-        "message": "Processing started. Poll /api/v1/crop_scan_status/{task_id} for results.",
-        "poll_interval_seconds": 3
-    }
+    raise HTTPException(status_code=410, detail="This endpoint is deprecated. Use /api/v1/report/generate_async instead.")
+    # Legacy code removed to prevent dependency errors
 
 
 @router.get("/crop_scan_status/{task_id}")
 async def get_scan_status(task_id: str):
-    """
-    Check the status of an async crop scan task.
-    
-    Response status values:
-    - queued: Task is waiting to start
-    - processing: Task is being processed (check progress field)
-    - completed: Task finished successfully (check result field)
-    - failed: Task failed (check error field)
-    """
-    task_data = await task_manager.get_task_status(task_id)
-    
-    if not task_data:
-        raise HTTPException(status_code=404, detail="Task not found or expired")
-    
-    return task_data
+    raise HTTPException(status_code=410, detail="This endpoint is deprecated.")
