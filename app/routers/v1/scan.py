@@ -588,8 +588,8 @@ async def _core_process_generation(
              report.treatment = final_treatment
              
         elif cat in ["vegetable", "vegetables"]:
-             d_info = full_analysis.get("disease_info", {})
-             market = full_analysis.get("marketability", {})
+             d_info = full_analysis.get("disease_info") or {}
+             market = full_analysis.get("marketability") or {}
              d_name = d_info.get("disease_name", "Unknown")
              d_sci = d_info.get("scientific_name", "")
              

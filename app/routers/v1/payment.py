@@ -27,6 +27,7 @@ class OrderCreateRequest(BaseModel):
 
 class OrderResponse(BaseModel):
     order_id: str
+    cf_payment_session_id: Optional[str] = None # Added per frontend request
     payment_link: Optional[str] = None
     payment_links: Optional[Dict[str, str]] = Field(None, description="All UPI deep links (gpay, phonepe, web, etc)")
     status: str
@@ -106,6 +107,8 @@ async def create_order(payload: OrderCreateRequest):
             
             order_data = resp.json()
             order_uid = order_data["uid"] # This is the internal UID from payment service
+            # Extract session ID, standard key is usually payment_session_id
+            cf_session_id = order_data.get("payment_session_id") or order_data.get("cf_payment_session_id") or order_data.get("cf_session_id") 
             cf_order_id = order_data.get("cf_order_id")
             coupons_list = order_data.get("coupons")
             
@@ -209,6 +212,7 @@ async def create_order(payload: OrderCreateRequest):
             
             return OrderResponse(
                 order_id=order_uid,
+                cf_payment_session_id=cf_session_id,
                 payment_link=payment_link,
                 payment_links=raw_payload, # Return full dict of links
                 status="PENDING",
