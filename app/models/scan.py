@@ -25,6 +25,8 @@ class AnalysisReport(BaseSchema):
     original_image_url = Column(Text, nullable=True)
     bbox_image_url = Column(Text, nullable=True)
 
+    status = Column(String(50), nullable=True)
+
     # Payment Info
     order_id = Column(String(100), nullable=True, index=True)
     payment_status = Column(String(20), default="PENDING", nullable=True)
@@ -53,6 +55,8 @@ class FruitAnalysis(BaseSchema):
     original_image_url = Column(Text, nullable=True)
     bbox_image_url = Column(Text, nullable=True)
 
+    status = Column(String(50), nullable=True)
+
     # Payment Info
     order_id = Column(String(100), nullable=True, index=True)
     payment_status = Column(String(20), default="PENDING", nullable=True)
@@ -78,6 +82,8 @@ class VegetableAnalysis(BaseSchema):
     
     original_image_url = Column(Text, nullable=True)
     bbox_image_url = Column(Text, nullable=True)
+
+    status = Column(String(50), nullable=True)
 
     # Payment Info
     order_id = Column(String(100), nullable=True, index=True)
@@ -126,6 +132,8 @@ class TranslatedAnalysisReport(BaseSchema):
     
     original_image_url = Column(Text, nullable=True)
     bbox_image_url = Column(Text, nullable=True)
+    
+    status = Column(String(50), nullable=True)
     
     order_id = Column(String(100), nullable=True)
     payment_status = Column(String(20), default="PENDING", nullable=True)

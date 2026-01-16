@@ -25,6 +25,11 @@ class TranslationService:
         existing = result.scalar_one_or_none()
         
         if existing:
+            # If FAILED, we might retry? Optional. For now return.
+            # If PENDING/PROCESSING, caller needs to know? 
+            # Logic here is meant to "Ensure exists". 
+            # If it's PENDING and we are here, essentially we are retrying or continuing.
+            # But normally we just return existing object and let caller decide.
             return existing
 
         # 2. Find the original report
@@ -49,69 +54,77 @@ class TranslationService:
             category = 'vegetable'
             
         if not original:
+            # Can't translate what doesn't exist
+            # Should we create a failed record? No, just raise.
             raise HTTPException(status_code=404, detail="Original report not found for translation")
 
-        # 3. Construct data for translation
-        data_to_translate = {
-            "item_name": getattr(original, 'crop_name', None) or getattr(original, 'fruit_name', None) or getattr(original, 'vegetable_name', None),
-            "disease_name": original.disease_name,
-            "scientific_name": getattr(original, 'scientific_name', None),
-            "severity": getattr(original, 'severity', None),
-            "grade": getattr(original, 'grade', None),
-            "treatment": getattr(original, 'treatment', None),
-            "analysis_raw": original.analysis_raw
-        }
-        
-        # 4. Perform Translation (Using Gemini Service)
-        try:
-            translated_data = await gemini_service.translate_report_content(data_to_translate, lang)
-        except Exception as e:
-            logger.error(f"Translation failed: {e}")
-            raise HTTPException(status_code=500, detail=f"Translation failed: {e}")
-        
-        if not translated_data:
-            raise HTTPException(status_code=500, detail="Translation generation returned empty")
-
-        # 5. Save to DB
+        # 3. Create Placeholder Record (PROCESSING)
+        # This prevents race conditions and sets status
         new_report = TranslatedAnalysisReport(
             report_uid=original.uid,
             user_id=user_id,
             language=lang,
             category_type=category,
-            item_name=translated_data.get("item_name"),
-            disease_name=translated_data.get("disease_name"),
-            scientific_name=translated_data.get("scientific_name"),
-            severity=translated_data.get("severity"),
-            grade=translated_data.get("grade"),
-            treatment=translated_data.get("treatment"),
-            analysis_raw=translated_data.get("analysis_raw"),
-            original_image_url=original.original_image_url,
-            bbox_image_url=original.bbox_image_url,
+            status="PROCESSING", # Mark as in-progress
             order_id=original.order_id,
-            payment_status=original.payment_status
+            payment_status=original.payment_status,
+            original_image_url=original.original_image_url,
+            bbox_image_url=original.bbox_image_url
         )
-        
         db.add(new_report)
         await db.commit()
         await db.refresh(new_report)
-        
-        # 6. Lookup KB Treatment (Post-Translation Enhancement)
-        # Using the translated terms to find localized KB entry
-        kb_treatment = await knowledge_service.get_treatment(
-            crop=new_report.item_name, 
-            disease=new_report.disease_name, 
-            category=category, 
-            db=db, 
-            scientific_name=new_report.scientific_name, 
-            language=lang
-        )
-        
-        if kb_treatment:
-            new_report.treatment = kb_treatment
+
+        try:
+            # 4. Construct data for translation
+            data_to_translate = {
+                "item_name": getattr(original, 'crop_name', None) or getattr(original, 'fruit_name', None) or getattr(original, 'vegetable_name', None),
+                "disease_name": original.disease_name,
+                "scientific_name": getattr(original, 'scientific_name', None),
+                "severity": getattr(original, 'severity', None),
+                "grade": getattr(original, 'grade', None),
+                "treatment": getattr(original, 'treatment', None),
+                "analysis_raw": original.analysis_raw
+            }
+            
+            # 5. Perform Translation (Using Gemini Service)
+            translated_data = await gemini_service.translate_report_content(data_to_translate, lang)
+            
+            if not translated_data:
+                raise Exception("Empty translation response")
+
+            # 6. Update Record with Data
+            new_report.item_name = translated_data.get("item_name")
+            new_report.disease_name = translated_data.get("disease_name")
+            new_report.scientific_name = translated_data.get("scientific_name")
+            new_report.severity = translated_data.get("severity")
+            new_report.grade = translated_data.get("grade")
+            new_report.treatment = translated_data.get("treatment")
+            new_report.analysis_raw = translated_data.get("analysis_raw")
+            
+            # 7. KB Lookup (Enhancement)
+            kb_treatment = await knowledge_service.get_treatment(
+                crop=new_report.item_name, 
+                disease=new_report.disease_name, 
+                category=category, 
+                db=db, 
+                scientific_name=new_report.scientific_name, 
+                language=lang
+            )
+            if kb_treatment:
+                new_report.treatment = kb_treatment
+                
+            new_report.status = "SUCCESS"
             await db.commit()
             await db.refresh(new_report)
             
-        return new_report
+            return new_report
+
+        except Exception as e:
+            logger.error(f"Translation failed: {e}")
+            new_report.status = "FAILED"
+            await db.commit()
+            raise HTTPException(status_code=500, detail=f"Translation failed: {e}")
         
     async def get_translated_report(self, db: AsyncSession, report_id: str, language: str):
         stmt = select(TranslatedAnalysisReport).where(

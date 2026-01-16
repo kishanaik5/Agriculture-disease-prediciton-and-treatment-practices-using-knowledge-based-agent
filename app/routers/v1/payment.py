@@ -295,6 +295,9 @@ async def verify_payment(order_id: str):
                                 report_rec = r_res.scalars().first()
                                 if report_rec:
                                     report_rec.payment_status = 'SUCCESS'
+                                    # Ensure status is PENDING so report/item knows to start processing
+                                    # Use update stmt to ensure commit
+                                    report_rec.status = 'PENDING' 
                                     await db_session.commit()
                                     await db_session.refresh(report_rec)
                         

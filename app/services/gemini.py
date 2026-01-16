@@ -4,6 +4,7 @@ from app.config import settings
 import json
 import logging
 import asyncio
+from fastapi import HTTPException
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -162,8 +163,7 @@ class GeminiService:
         }}
         """
 
-        # Retry logic for Flash: 5 attempts
-        max_retries = 5
+        # Custom Logic: 1 Attempt Flash -> 1 Attempt Pro -> Fail
         
         # Prepare content part (image)
         content_part = types.Part.from_bytes(data=image_data, mime_type=mime_type)
@@ -171,29 +171,25 @@ class GeminiService:
         # Config for JSON response
         json_config = types.GenerateContentConfig(response_mime_type="application/json")
         
-        for attempt in range(max_retries):
-            try:
-                logger.info(f"Attempt {attempt + 1}/{max_retries} with Gemini Flash ({self.flash_model})...")
-                
-                flash_response = await self.client.aio.models.generate_content(
-                    model=self.flash_model,
-                    contents=[prompt, content_part],
-                    config=json_config
-                )
+        # 1. Attempt Flash (Once)
+        try:
+            logger.info(f"Attempting Analysis with Gemini Flash ({self.flash_model})...")
+            flash_response = await self.client.aio.models.generate_content(
+                model=self.flash_model,
+                contents=[prompt, content_part],
+                config=json_config
+            )
 
-                if flash_response.text:
-                    try:
-                        return json.loads(flash_response.text)
-                    except json.JSONDecodeError:
-                        logger.warning("Flash returned invalid JSON, retrying...")
-                        continue
-            except Exception as e:
-                logger.warning(f"Flash attempt {attempt + 1} failed: {e}")
-                if attempt < max_retries - 1:
-                    await asyncio.sleep(1 * (attempt + 1)) # Simple backoff
+            if flash_response.text:
+                try:
+                    return json.loads(flash_response.text)
+                except json.JSONDecodeError:
+                    logger.warning("Flash returned invalid JSON. Switching to Pro...")
+        except Exception as e:
+            logger.warning(f"Gemini Flash failed: {e}. Switching to Gemini Pro...")
         
-        # Fallback to Pro
-        logger.warning(f"All Flash attempts failed. Switching to Gemini Pro ({self.pro_model})...")
+        # 2. Fallback to Pro (Once)
+        logger.info(f"Attempting Analysis with Gemini Pro ({self.pro_model})...")
         try:
             pro_response = await self.client.aio.models.generate_content(
                 model=self.pro_model,
@@ -203,7 +199,8 @@ class GeminiService:
             return json.loads(pro_response.text)
         except Exception as e2:
             logger.error(f"Gemini Pro also failed: {e2}")
-            raise e2
+            # If both fail, return specific error or let exception bubble up
+            raise HTTPException(status_code=503, detail="AI Models unavailable") from e2
 
 
 
@@ -252,7 +249,8 @@ class GeminiService:
            - Estimate **Days_to_Rot** at specific storage temperatures ($10^\\circ C$ vs $25^\\circ C$).
         8. Provide Context-Aware Management:
            - For Growing Plants: Provide field treatment (Organic & Chemical).
-           - For Harvested Vegetables: Provide storage advice and consumption safety.
+           - For Harvested Vegetables: Provide organic storage/sanitation practices (e.g. disposal, isolation) in 'organic_practices' and chemical sanitizers in 'chemical_practices'.
+           - Ensure 'organic_practices' is NEVER empty; if no cure, suggest disposal/prevention.
 
         Output Rules:
         - STRICT JSON ONLY.
@@ -354,7 +352,8 @@ class GeminiService:
         Cold storage (10°C).
         
         Management & Safety:
-        Recommend Organic and Chemical Management Practices (fungicides or storage adjustments).
+        Recommend Organic and Chemical Management Practices (fungicides or storage adjustments). 
+        For Harvested Fruit, include organic sanitation/disposal steps in 'organic_practices'.
         Assess Edibility (e.g., "Safe", "Trim and Eat", "Toxic/Discard").
         
         Output Rules:
@@ -423,31 +422,29 @@ class GeminiService:
         return await self._generate_response(prompt, image_data, mime_type)
 
     async def _generate_response(self, prompt: str, image_data: bytes, mime_type: str) -> dict:
-        """Helper to run Gemini generation with retries"""
-        max_retries = 3
+        """Helper to run Gemini generation with 1 attempt Flash -> 1 attempt Pro"""
         content_part = types.Part.from_bytes(data=image_data, mime_type=mime_type)
         json_config = types.GenerateContentConfig(response_mime_type="application/json")
         
-        # Try Flash
-        for attempt in range(max_retries):
-            try:
-                flash_response = await self.client.aio.models.generate_content(
-                    model=self.flash_model,
-                    contents=[prompt, content_part],
-                    config=json_config
-                )
-                if flash_response.text:
-                    try:
-                        return json.loads(flash_response.text)
-                    except json.JSONDecodeError:
-                        continue
-            except Exception as e:
-                logger.warning(f"Flash attempt {attempt + 1} failed: {e}")
-                if attempt < max_retries - 1:
-                    await asyncio.sleep(1)
-        
-        # Fallback to Pro
+        # 1. Try Flash (Once)
         try:
+            logger.info(f"Attempting Analysis with Gemini Flash ({self.flash_model})...")
+            flash_response = await self.client.aio.models.generate_content(
+                model=self.flash_model,
+                contents=[prompt, content_part],
+                config=json_config
+            )
+            if flash_response.text:
+                try:
+                    return json.loads(flash_response.text)
+                except json.JSONDecodeError:
+                     logger.warning("Flash returned invalid JSON. Switching to Pro...")
+        except Exception as e:
+            logger.warning(f"Flash failed: {e}. Switching to Pro...")
+        
+        # 2. Fallback to Pro (Once)
+        try:
+            logger.info(f"Attempting Analysis with Gemini Pro ({self.pro_model})...")
             pro_response = await self.client.aio.models.generate_content(
                 model=self.pro_model,
                 contents=[prompt, content_part],
@@ -456,7 +453,7 @@ class GeminiService:
             return json.loads(pro_response.text)
         except Exception as e2:
             logger.error(f"Pro failed: {e2}")
-            raise e2
+            raise HTTPException(status_code=503, detail="AI Models unavailable") from e2
 
     async def generate_bbox_crop(self, image_data: bytes, disease_name: str, mime_type: str = "image/jpeg") -> list:
         """
