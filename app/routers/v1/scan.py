@@ -141,7 +141,10 @@ async def get_all_reports(
                 model.disease_name,
                 model.status,
                 getattr(model, 'crop_name', getattr(model, 'fruit_name', getattr(model, 'vegetable_name', None))).label("crop_name")
-            ).where(model.user_id == user_id)
+            ).where(
+                model.user_id == user_id,
+                model.status.in_(['PROCESSING', 'SUCCESS'])
+            )
 
         queries = []
         if cat:
@@ -218,7 +221,8 @@ async def get_all_reports(
         
         base_stmt = select(TranslatedAnalysisReport).where(
             TranslatedAnalysisReport.user_id == user_id,
-            TranslatedAnalysisReport.language == language
+            TranslatedAnalysisReport.language == language,
+            TranslatedAnalysisReport.status.in_(['PROCESSING', 'SUCCESS'])
         )
         
         if cat:
@@ -403,11 +407,10 @@ async def analyze_qa(
     category = icon_entry.category_type.lower() # crop, fruit, vegetable
     
     # Resolve Name based on Language
-    crop_name = icon_entry.name_en # Default
-    if language == 'kn' and icon_entry.name_kn:
-        crop_name = icon_entry.name_kn
-    elif language == 'hi' and icon_entry.name_hn:
-        crop_name = icon_entry.name_hn
+    # Always use English name for Scan logic as per requirement
+    crop_name = icon_entry.name_en 
+    
+    # Optional: We could keep localized name for error messages, but for now using English as requested.
         
     # 1. Read Image Bytes
     image_bytes = await file.read()
