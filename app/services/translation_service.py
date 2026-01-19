@@ -30,6 +30,11 @@ class TranslationService:
             # Logic here is meant to "Ensure exists". 
             # If it's PENDING and we are here, essentially we are retrying or continuing.
             # But normally we just return existing object and let caller decide.
+            if existing.disease_name and (not existing.status or existing.status == "PENDING"):
+                existing.status = "SUCCESS"
+                await db.commit()
+                await db.refresh(existing)
+                
             return existing
 
         # 2. Find the original report

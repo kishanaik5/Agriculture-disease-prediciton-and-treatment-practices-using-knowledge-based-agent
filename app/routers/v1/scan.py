@@ -42,7 +42,7 @@ router = APIRouter()
 from app.models.scan import MasterIcon
 
 @router.get("/All", tags=["Show Details"])
-async def get_all_items(language: str = "en", name: Optional[str] = None, category: Optional[str] = None, db: AsyncSession = Depends(get_db)):
+async def get_all_items(language: str = "en", name: Optional[str] = None, category: Optional[str] = None, category_id: Optional[str] = None, db: AsyncSession = Depends(get_db)):
     """
     Get all supported items from MasterIcon DB.
     """
@@ -57,6 +57,9 @@ async def get_all_items(language: str = "en", name: Optional[str] = None, catego
             cat_search = "crop"
             
         stmt = stmt.where(MasterIcon.category_type == cat_search)
+        
+    if category_id:
+        stmt = stmt.where(MasterIcon.category_id == category_id)
         
     if name:
         # Search in relevant language or english?
@@ -97,6 +100,7 @@ class ReportSummary(BaseModel):
     severity: Optional[str] = None
     disease_name: Optional[str] = None
     status: Optional[str] = None
+    crop_name: Optional[str] = None
 
 @router.get("/all_reports", tags=["Show Details"], response_model=ListModel[ReportSummary])
 async def get_all_reports(
@@ -135,7 +139,8 @@ async def get_all_reports(
                 model.created_at,
                 model.severity,
                 model.disease_name,
-                model.status
+                model.status,
+                getattr(model, 'crop_name', getattr(model, 'fruit_name', getattr(model, 'vegetable_name', None))).label("crop_name")
             ).where(model.user_id == user_id)
 
         queries = []
@@ -173,7 +178,10 @@ async def get_all_reports(
             u_stmt.c.created_at,
             u_stmt.c.severity,
             u_stmt.c.disease_name,
-            u_stmt.c.status
+            u_stmt.c.severity,
+            u_stmt.c.disease_name,
+            u_stmt.c.status,
+            u_stmt.c.crop_name
         ).order_by(u_stmt.c.created_at.desc()).limit(limit).offset(offset)
         
         # Count query separate? Union count is expensive but standard
@@ -197,7 +205,8 @@ async def get_all_reports(
                 created_at=r.created_at,
                 severity=r.severity,
                 disease_name=r.disease_name,
-                status=r.status
+                status=r.status,
+                crop_name=r.crop_name
             ))
             
     else:
@@ -234,7 +243,8 @@ async def get_all_reports(
                 created_at=r.created_at,
                 severity=r.severity,
                 disease_name=r.disease_name,
-                status=r.status
+                status=r.status,
+                crop_name=r.item_name
             ))
 
     return ListModel[ReportSummary](items=items, count=total_count)
@@ -370,8 +380,7 @@ async def set_category_report_price(
 async def analyze_qa(
     file: UploadFile = File(...),
     user_id: str = Form(...),
-    crop_name: str = Form(...),
-    category: str = Form(...), # crop, fruit, vegetable
+    category_id: str = Form(...),
     language: str = Form("en"), # Added language support
     db: AsyncSession = Depends(get_db)
 ):
@@ -383,8 +392,23 @@ async def analyze_qa(
     - If UNHEALTHY -> Creates DB record (PENDING), Returns Report ID.
     - If INVALID -> Error.
     """
-    # language = "en" # Use input
+    # 1. Lookup Category & Crop Name
+    stmt = select(MasterIcon).where(MasterIcon.category_id == category_id)
+    res = await db.execute(stmt)
+    icon_entry = res.scalars().first()
     
+    if not icon_entry:
+        raise HTTPException(status_code=400, detail="Invalid category_id")
+        
+    category = icon_entry.category_type.lower() # crop, fruit, vegetable
+    
+    # Resolve Name based on Language
+    crop_name = icon_entry.name_en # Default
+    if language == 'kn' and icon_entry.name_kn:
+        crop_name = icon_entry.name_kn
+    elif language == 'hi' and icon_entry.name_hn:
+        crop_name = icon_entry.name_hn
+        
     # 1. Read Image Bytes
     image_bytes = await file.read()
     
@@ -997,9 +1021,13 @@ async def get_report_item(
             t_res = await db.execute(t_stmt)
             t_report = t_res.scalars().first()
             
-            # If no record or status is NULL/PENDING -> Trigger Translation
+            # If no record or status is NULL/PENDING -> Check content or Trigger Translation
             t_status = t_report.status if t_report else "PENDING"
             if not t_status: t_status = "PENDING"
+            
+            # Self-healing: If status is PENDING/NULL but we have data, treat as SUCCESS
+            if t_report and t_status == "PENDING" and t_report.disease_name:
+                t_status = "SUCCESS"
             
             if t_status == "PENDING":
                 # Create/Get & Update to PROCESSING
