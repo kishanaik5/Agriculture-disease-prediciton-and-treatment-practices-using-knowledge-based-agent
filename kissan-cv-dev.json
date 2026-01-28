@@ -99,6 +99,14 @@
                 {
                     "name": "PAYMENT_API_KEY",
                     "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-cv-dev/PAYMENT_API_KEY"
+                },
+                {
+                    "name": "JWT_SECRET",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-cv-dev/JWT_SECRET"
+                },
+                {
+                    "name": "SUBSCRIPTION_BASE_URL",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-cv-dev/SUBSCRIPTION_BASE_URL"
                 }
             ],
             "systemControls": [],
