@@ -26,8 +26,11 @@ venv/
 env/
 ENV/
 
-# Environment Variables
+# Environment# Env files
 .env
+
+# Agent workflows (not needed in repo)
+.agent/
 
 # MacOS
 .DS_Store
