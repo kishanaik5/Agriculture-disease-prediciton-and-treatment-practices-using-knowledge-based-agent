@@ -24,6 +24,11 @@ pipeline {
                                 exit 1
                             fi
 
+                            # Clean untracked files to avoid ghost migrations
+                            echo "Cleaning untracked files..."
+                            git clean -fd
+                            git reset --hard HEAD
+
                             # Update submodule URLs to use SSH
                             sed -i 's|https://github.com/|git@github.com:|g' .gitmodules
 
