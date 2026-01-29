@@ -1,8 +1,22 @@
 import sys
 from pathlib import Path
+import os
 
-sys.path.append(str(Path(__file__).parents[1]))
-sys.path.append(str(Path(__file__).parents[1] / "SharedBackend" / "src"))
+# Get the absolute path to the project root
+project_root = Path(__file__).parents[1].resolve()
+shared_backend_path = project_root / "SharedBackend" / "src"
+
+# Add paths to sys.path
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+if str(shared_backend_path) not in sys.path:
+    sys.path.insert(0, str(shared_backend_path))
+
+# Also add /app path for Docker environment
+if os.path.exists("/app") and "/app" not in sys.path:
+    sys.path.insert(0, "/app")
+if os.path.exists("/app/SharedBackend/src") and "/app/SharedBackend/src" not in sys.path:
+    sys.path.insert(0, "/app/SharedBackend/src")
 
 from logging.config import fileConfig
 
