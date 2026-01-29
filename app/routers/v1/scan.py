@@ -44,7 +44,7 @@ router = APIRouter()
 
 
 
-from models.scan import MasterIcon
+from app.models.scan import MasterIcon
 
 @router.get("/All", tags=["Show Details"])
 async def get_all_items(language: str = "en", name: Optional[str] = None, category: Optional[str] = None, category_id: Optional[str] = None, db: AsyncSession = Depends(get_db)):
@@ -613,7 +613,7 @@ async def generate_report_item(
         
         else:
             # Case F: Valid Report, Requesting Translation
-            from services.translation_service import translation_service
+            from app.services.translation_service import translation_service
             
             t_stmt = select(TranslatedAnalysisReport).where(
                 TranslatedAnalysisReport.report_uid == report_id,
