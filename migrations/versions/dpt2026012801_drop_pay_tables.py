@@ -1,7 +1,7 @@
 """drop payment tables
 
-Revision ID: drop_pay_tables_2026
-Revises: drop_async_jobs_cleanup
+Revision ID: dpt2026012801
+Revises: drop_async_jobs_table
 Create Date: 2026-01-28 13:00:00.000000
 
 """
