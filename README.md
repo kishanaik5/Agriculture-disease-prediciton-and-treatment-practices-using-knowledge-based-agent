@@ -347,17 +347,17 @@ find . -name "._*" -delete
 
 ## 📝 License
 
-Proprietary - Silo Production
+Proprietary - SiloFortune Production
 
 ## 👥 Contributors
 
-- Development Team @ Silo Production
+- Development Team @ Silofortune Production
 
 ## 📞 Support
 
 For issues and questions:
 - GitHub Issues: [Create Issue](https://github.com/silo-prod/Kissan-Sampurna-CV-service/issues)
-- Email: support@siloprod.com
+- Email: kishan@silofortune.com
 
 ---
 
