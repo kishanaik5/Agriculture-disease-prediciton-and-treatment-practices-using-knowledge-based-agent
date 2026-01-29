@@ -1,16 +1,16 @@
-from dependencies import require_auth
+from app.dependencies import require_auth
 from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException, BackgroundTasks, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc, literal_column, union_all, func
 from sqlalchemy.orm import selectinload
-from database import get_db
-from models.scan import AnalysisReport, FruitAnalysis, VegetableAnalysis, TranslatedAnalysisReport, MasterIcon
+from app.database import get_db
+from app.models.scan import AnalysisReport, FruitAnalysis, VegetableAnalysis, TranslatedAnalysisReport, MasterIcon
 # from models.payment import PaymentTransaction # Removed incorrect import
-from schemas.scan import ScanResponse, AnalysisResult, CropItem
-from services.gemini import gemini_service
-from services.s3 import s3_service_public
-from services.image import image_service
-from services.knowledge import knowledge_service
+from app.schemas.scan import ScanResponse, AnalysisResult, CropItem
+from app.services.gemini import gemini_service
+from app.services.s3 import s3_service_public
+from app.services.image import image_service
+from app.services.knowledge import knowledge_service
 import uuid
 import logging
 import io
@@ -20,11 +20,11 @@ import httpx
 import random
 import string
 from datetime import datetime
-from config import get_settings
+from app.config import get_settings
 from typing import Optional, Any, Dict
 
 from zoneinfo import ZoneInfo
-from database import SessionLocal
+from app.database import SessionLocal
 from SharedBackend.managers.base import ListModel
 from pydantic import BaseModel
 # from services.redis_manager import task_manager # Removed Redis dependency

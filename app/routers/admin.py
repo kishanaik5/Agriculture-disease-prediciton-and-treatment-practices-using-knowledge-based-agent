@@ -2,15 +2,15 @@ from fastapi import APIRouter, Depends
 
 from SharedBackend.managers import *
 
-from models import *
-from config import get_settings, get_engine
-from utils import dependencies as D
+from app.models import *
+from app.config import get_settings, get_engine
+from app.dependencies import require_auth, master_key_dependency
 
 settings = get_settings()
 engine = get_engine(settings.name)
 api_key_manager = ApiKeyManager(engine)
 
-router = APIRouter(dependencies=[Depends(D.master_key_dependency)])
+router = APIRouter(dependencies=[Depends(master_key_dependency)])
 
 
 @router.get("/health-check")
