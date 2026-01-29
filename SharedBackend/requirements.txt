@@ -1,0 +1,11 @@
+starlette~=0.41.3
+sqlalchemy~=2.0.36
+fastapi~=0.115.6
+cryptography~=44.0.0
+pyjwt~=2.10.1
+pydantic~=2.10.2
+httpx~=0.28.1
+async-lru~=2.0.4
+aiosqlite~=0.20.0
+asyncpg~=0.30.0
+greenlet~=3.1.1

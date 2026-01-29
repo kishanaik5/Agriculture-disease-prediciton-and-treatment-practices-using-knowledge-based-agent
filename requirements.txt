@@ -1,0 +1,15 @@
+fastapi
+uvicorn
+sqlalchemy[asyncio]
+asyncpg
+google-genai
+boto3
+pydantic-settings
+pillow
+reportlab
+python-multipart
+tenacity
+alembic
+redis>=5.0.0
+aioredis>=2.0.0
+psycopg2-binary

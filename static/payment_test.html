@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kissan Payment Test</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #4ade80;
+            --primary-dark: #22c55e;
+            --bg: #111827;
+            --glass: rgba(255, 255, 255, 0.05);
+            --border: rgba(255, 255, 255, 0.1);
+        }
+
+        body {
+            background-color: var(--bg);
+            color: white;
+            font-family: 'Outfit', sans-serif;
+            display: flex;
+            justify_content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            background-image: radial-gradient(circle at 10% 20%, rgba(34, 197, 94, 0.2) 0%, transparent 20%),
+                radial-gradient(circle at 90% 80%, rgba(168, 85, 247, 0.2) 0%, transparent 20%);
+        }
+
+        .card {
+            background: var(--glass);
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 2rem;
+            width: 100%;
+            max-width: 450px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+            animation: fadeIn 0.5s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        h1 {
+            font-size: 1.8rem;
+            margin-bottom: 2rem;
+            background: linear-gradient(to right, #4ade80, #2dd4bf);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            text-align: center;
+        }
+
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-size: 0.9rem;
+            color: #d1d5db;
+        }
+
+        input {
+            width: 100%;
+            padding: 12px;
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            color: white;
+            font-family: inherit;
+            transition: all 0.3s;
+            box-sizing: border-box;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 15px rgba(74, 222, 128, 0.2);
+        }
+
+        button {
+            width: 100%;
+            padding: 14px;
+            border: none;
+            border-radius: 12px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 1rem;
+            transition: all 0.3s;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+            color: #064e3b;
+            margin-top: 1rem;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(74, 222, 128, 0.3);
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            margin-top: 1rem;
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        #result {
+            margin-top: 2rem;
+            padding-top: 2rem;
+            border-top: 1px solid var(--border);
+            display: none;
+        }
+
+        .status-box {
+            background: rgba(0, 0, 0, 0.2);
+            padding: 1rem;
+            border-radius: 10px;
+            margin-bottom: 1rem;
+            text-align: center;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+
+        .status-pending {
+            background: #f59e0b;
+            color: #451a03;
+        }
+
+        .status-success {
+            background: #4ade80;
+            color: #064e3b;
+        }
+
+        .payment-link-btn {
+            display: block;
+            text-align: center;
+            background: #3b82f6;
+            color: white;
+            text-decoration: none;
+            padding: 12px;
+            border-radius: 10px;
+            margin-top: 1rem;
+        }
+
+        .loading {
+            opacity: 0.7;
+            pointer-events: none;
+        }
+
+        pre {
+            background: #000;
+            padding: 1rem;
+            border-radius: 8px;
+            overflow-x: auto;
+            font-size: 0.8rem;
+            color: #a7f3d0;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="card">
+        <h1>💸 Test Payment Interface</h1>
+
+        <div id="createForm">
+            <div class="form-group">
+                <label>User ID</label>
+                <input type="text" id="userId" value="user_123" placeholder="Enter User ID">
+            </div>
+            <div class="form-group">
+                <label>Mobile Number</label>
+                <input type="tel" id="mobile" value="9999999999" placeholder="Enter Mobile">
+            </div>
+            <div class="form-group">
+                <label>Report UID (Context ID)</label>
+                <input type="text" id="reportId" value="crop_analysis_123" placeholder="Enter Report UID">
+            </div>
+            <div class="form-group">
+                <label>Crop Name (Meta)</label>
+                <input type="text" id="cropName" value="Corn" placeholder="Enter Crop Name">
+            </div>
+            <div class="form-group">
+                <label>Amount (₹)</label>
+                <input type="number" id="amount" value="1.0" step="0.1">
+            </div>
+            <button class="btn-primary" onclick="createOrder()" id="payBtn">Create & Pay</button>
+        </div>
+
+        <div id="result">
+            <div class="status-box">
+                <small>Order ID</small>
+                <div id="orderIdDisplay" style="font-weight:bold; margin: 5px 0;">--</div>
+                <small>Payment Link</small>
+                <div id="paymentLinkDisplay" style="font-size: 0.8rem; overflow-wrap: break-word;">--</div>
+                <span id="statusBadge" class="status-badge status-pending">PENDING</span>
+            </div>
+
+            <a href="#" target="_blank" id="paymentLinkBtn" class="payment-link-btn">Pay via Link</a>
+
+            <button class="btn-secondary" onclick="verifyStatus()">Verify Status</button>
+            <div style="margin-top:1rem;">
+                <label>Verification Response:</label>
+                <pre id="verifyResult"></pre>
+            </div>
+
+            <button class="btn-secondary" onclick="resetForm()"
+                style="margin-top:20px; background:rgba(255,0,0,0.1)">Start New</button>
+        </div>
+    </div>
+
+    <script>
+        // Determine base URL: use localhost if opening from file, otherwise relative
+        const BASE_URL = window.location.protocol === 'file:' ? 'http://localhost:8000' : '';
+        let currentOrderId = null;
+
+        async function createOrder() {
+            const btn = document.getElementById('payBtn');
+            btn.innerHTML = 'Processing...';
+            btn.classList.add('loading');
+
+            const payload = {
+                user_id: document.getElementById('userId').value,
+                mobile_number: document.getElementById('mobile').value,
+                amount: parseFloat(document.getElementById('amount').value),
+                analysis_report_uid: document.getElementById('reportId').value,
+                analysis_type: "crop",
+                extra_meta: {
+                    crop_name: document.getElementById('cropName').value
+                }
+            };
+
+            try {
+                const res = await fetch(`${BASE_URL}/api/v1/payments/create-order`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                if (!res.ok) {
+                    const err = await res.json();
+                    alert("Error: " + (err.detail || 'Failed'));
+                    return;
+                }
+
+                const data = await res.json();
+                currentOrderId = data.order_id;
+
+                document.getElementById('createForm').style.display = 'none';
+                document.getElementById('result').style.display = 'block';
+
+                document.getElementById('orderIdDisplay').textContent = currentOrderId;
+                document.getElementById('paymentLinkBtn').href = data.payment_link;
+
+                // update status
+                updateStatusUI(data.status);
+
+                // Start polling
+                startPolling();
+
+            } catch (e) {
+                alert("Network Error: " + e.message);
+            } finally {
+                btn.innerHTML = 'Create & Pay';
+                btn.classList.remove('loading');
+            }
+        }
+
+        async function verifyStatus() {
+            if (!currentOrderId) return;
+            document.getElementById('verifyResult').textContent = "Checking...";
+
+            try {
+                const res = await fetch(`${BASE_URL}/api/v1/payments/verify/${currentOrderId}`);
+                const data = await res.json();
+
+                document.getElementById('verifyResult').textContent = JSON.stringify(data, null, 2);
+                updateStatusUI(data.status);
+
+                if (data.status === 'SUCCESS') {
+                    // Celebrate
+                    document.getElementById('paymentLinkBtn').style.display = 'none';
+                }
+
+            } catch (e) {
+                document.getElementById('verifyResult').textContent = "Error: " + e.message;
+            }
+        }
+
+        function startPolling() {
+            const pollBox = document.getElementById('verifyResult');
+            pollBox.textContent = "Waiting for payment... (Polling every 3s)";
+
+            const interval = setInterval(async () => {
+                if (!currentOrderId) { clearInterval(interval); return; }
+
+                try {
+                    const res = await fetch(`${BASE_URL}/api/v1/payments/verify/${currentOrderId}`);
+                    const data = await res.json();
+
+                    updateStatusUI(data.status);
+
+                    if (data.status === 'SUCCESS') {
+                        clearInterval(interval);
+                        pollBox.textContent = "Payment Verified Successfully! ✅";
+                        document.getElementById('paymentLinkBtn').style.display = 'none';
+                        // Confetti or visual cue
+                        document.body.style.backgroundImage = "radial-gradient(circle at 50% 50%, rgba(74, 222, 128, 0.4) 0%, #111827 70%)";
+                    }
+                } catch (e) {
+                    console.log("Poll error", e);
+                }
+            }, 3000);
+        }
+
+        function updateStatusUI(status) {
+            const badge = document.getElementById('statusBadge');
+            badge.textContent = status;
+            if (status === 'SUCCESS') {
+                badge.className = 'status-badge status-success';
+            } else {
+                badge.className = 'status-badge status-pending';
+            }
+        }
+
+        function resetForm() {
+            document.getElementById('createForm').style.display = 'block';
+            document.getElementById('result').style.display = 'none';
+            currentOrderId = null;
+        }
+    </script>
+</body>
+
+</html>

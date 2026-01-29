@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kisaan Sampurna | AI Crop Diagnostics</title>
+    <style>
+        :root {
+            --primary: #10b981;
+            --primary-dark: #059669;
+            --glass: rgba(255, 255, 255, 0.1);
+            --glass-border: rgba(255, 255, 255, 0.2);
+            --text: #f0fdf4;
+            --text-muted: #9ca3af;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+        }
+
+        body {
+            background: radial-gradient(circle at top right, #064e3b, #000000);
+            color: var(--text);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 2rem;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 1200px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 2rem;
+        }
+
+        @media (max-width: 900px) {
+            .container {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .card {
+            background: var(--glass);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--glass-border);
+            border-radius: 24px;
+            padding: 2.5rem;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            transition: transform 0.3s ease;
+        }
+
+        .card:hover {
+            transform: translateY(-5px);
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            font-weight: 800;
+            margin-bottom: 0.5rem;
+            background: linear-gradient(to right, #34d399, #6ee7b7);
+            background-clip: text;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        p.subtitle {
+            color: var(--text-muted);
+            margin-bottom: 2rem;
+        }
+
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 500;
+            color: #d1fae5;
+        }
+
+        input[type="text"],
+        input[type="number"],
+        select {
+            width: 100%;
+            padding: 1rem;
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid var(--glass-border);
+            border-radius: 12px;
+            color: white;
+            font-size: 1rem;
+            transition: all 0.2s;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.2);
+        }
+
+        .file-upload {
+            position: relative;
+            background: rgba(0, 0, 0, 0.3);
+            border: 2px dashed var(--glass-border);
+            border-radius: 16px;
+            padding: 2rem;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .file-upload:hover {
+            border-color: var(--primary);
+            background: rgba(16, 185, 129, 0.05);
+        }
+
+        .hidden-input {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            opacity: 0;
+            cursor: pointer;
+        }
+
+        .checkbox-wrapper {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+
+        input[type="checkbox"] {
+            width: 1.5rem;
+            height: 1.5rem;
+            accent-color: var(--primary);
+            cursor: pointer;
+        }
+
+        button.btn-primary {
+            width: 100%;
+            padding: 1rem;
+            border: none;
+            border-radius: 12px;
+            background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+            color: white;
+            font-weight: 700;
+            font-size: 1.1rem;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin-top: 1rem;
+        }
+
+        button.btn-primary:hover {
+            filter: brightness(1.1);
+            transform: scale(1.02);
+        }
+
+        button.btn-primary:active {
+            transform: scale(0.98);
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            margin-top: 1rem;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid rgba(255, 255, 255, 0.1);
+            border-left-color: var(--primary);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 1rem;
+        }
+
+        @keyframes spin {
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+
+        /* Results Section */
+        #results-area {
+            display: none;
+            /* Hidden by default */
+            height: 100%;
+        }
+
+        .result-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--glass-border);
+        }
+
+        .status-badge {
+            padding: 0.5rem 1rem;
+            border-radius: 99px;
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+
+        .status-healthy {
+            background: rgba(16, 185, 129, 0.2);
+            color: #34d399;
+        }
+
+        .status-disease {
+            background: rgba(239, 68, 68, 0.2);
+            color: #f87171;
+        }
+
+        .image-gallery {
+            display: grid;
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .img-container {
+            width: 100%;
+            max-width: 400px;
+            margin: 0 auto;
+            border-radius: 12px;
+            overflow: hidden;
+            border: 1px solid var(--glass-border);
+            position: relative;
+        }
+
+        .img-container img {
+            width: 100%;
+            display: block;
+        }
+
+        .img-label {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 0.5rem;
+            font-size: 0.8rem;
+            text-align: center;
+            backdrop-filter: blur(4px);
+        }
+
+        pre {
+            background: rgba(0, 0, 0, 0.5);
+            padding: 1rem;
+            border-radius: 12px;
+            overflow-x: auto;
+            border: 1px solid var(--glass-border);
+            color: #d1fae5;
+            font-size: 0.85rem;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="container">
+        <!-- Input Form -->
+        <div class="card">
+            <h1>Kisaan Sampurna</h1>
+            <p class="subtitle">Advanced Crop Diagnosis & Advisory</p>
+
+            <form id="scanForm">
+                <div class="form-group">
+                    <label>User ID</label>
+                    <input type="text" name="user_id" value="users_web_test_01" required>
+                </div>
+
+
+
+                <div class="form-group">
+                    <label>Response Language</label>
+                    <select name="language" id="langSelect" onchange="fetchCrops()">
+                        <option value="en" selected>English (Default)</option>
+                        <option value="kn">Kannada (ಕನ್ನಡ)</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label id="cropLabel">Crop Name</label>
+                    <select name="crop_name" id="cropSelect" required>
+                        <option value="" disabled selected>Loading crops...</option>
+                    </select>
+                </div>
+
+                <div class="form-group" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                    <div>
+                        <label>Acres of Land</label>
+                        <select name="acres_of_land">
+                            <option value="" disabled selected>Select Range</option>
+                            <option value="0-2 acres">0-2 acres</option>
+                            <option value="2-5 acres">2-5 acres</option>
+                            <option value="5-9 acres">5-9 acres</option>
+                            <option value="10+ acres">10+ acres</option>
+                        </select>
+                    </div>
+                    <div class="checkbox-wrapper">
+                        <input type="checkbox" name="is_mixed_cropping" id="mixedCheck">
+                        <label for="mixedCheck" style="margin:0; cursor:pointer;">Mixed Cropping</label>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>Upload Leaf Image</label>
+                    <div class="file-upload">
+                        <input type="file" name="file" class="hidden-input" accept="image/*" required
+                            onchange="previewFile(this)">
+                        <div id="file-label">
+                            <span style="font-size: 2rem;">🌿</span>
+                            <p style="margin-top: 0.5rem; color: var(--text-muted);">Click or Drag & Drop</p>
+                        </div>
+                    </div>
+                </div>
+
+                <button type="submit" class="btn-primary">
+                    Analyze Crop
+                </button>
+            </form>
+
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <p>Analyzing with Gemini AI...</p>
+            </div>
+        </div>
+
+        <!-- Results Area -->
+        <div class="card" id="results-area">
+            <div class="result-header">
+                <h2 id="res-disease-name">Disease Name</h2>
+                <span class="status-badge" id="res-status">Status</span>
+            </div>
+
+            <div class="image-gallery">
+                <div class="img-container" id="bbox-container" style="display:none;">
+                    <img id="res-bbox-img" src="" alt="Bounding Boxes">
+                    <div class="img-label">Detected Lesions</div>
+                </div>
+                <!-- Original Image if needed, we can show it here too -->
+            </div>
+
+            <div id="kb-section"
+                style="display:none; margin-bottom: 2rem; background: rgba(16, 185, 129, 0.1); padding: 1.5rem; border-radius: 16px; border: 1px solid rgba(16, 185, 129, 0.3);">
+                <h3 style="color: #6ee7b7; margin-bottom: 0.5rem; display: flex; align-items: center; gap: 0.5rem;">
+                    <span>✅</span> Verified Treatment Protocol
+                </h3>
+                <p id="kb-text" style="line-height: 1.6; color: #d1fae5;"></p>
+            </div>
+
+            <h3 style="margin-bottom: 0.5rem;">Detailed Analysis</h3>
+            <pre id="res-json"></pre>
+        </div>
+    </div>
+
+    <script>
+        // Init
+        document.addEventListener('DOMContentLoaded', () => {
+            fetchCrops();
+        });
+
+        async function fetchCrops() {
+            const lang = document.getElementById('langSelect').value;
+            const cropSelect = document.getElementById('cropSelect');
+            const cropLabel = document.getElementById('cropLabel');
+
+            // Update Label Language
+            if (lang === 'kn') {
+                cropLabel.textContent = "ಬೆಳೆಯ ಹೆಸರು (Crop Name)";
+            } else {
+                cropLabel.textContent = "Crop Name";
+            }
+
+            cropSelect.innerHTML = '<option value="" disabled selected>Loading...</option>';
+
+            try {
+                const res = await fetch(`/api/v1/crops?language=${lang}`);
+                const crops = await res.json();
+
+                cropSelect.innerHTML = '<option value="" disabled selected>Select a Crop</option>';
+
+                crops.forEach(crop => {
+                    const opt = document.createElement('option');
+                    opt.value = crop;
+                    opt.textContent = crop;
+                    cropSelect.appendChild(opt);
+                });
+            } catch (err) {
+                console.error("Failed to fetch crops", err);
+                cropSelect.innerHTML = '<option value="" disabled>Error loading crops</option>';
+            }
+        }
+
+        function previewFile(input) {
+            if (input.files && input.files[0]) {
+                document.getElementById('file-label').innerHTML = `
+                <span style="font-size: 2rem;">📸</span>
+                <p style="margin-top: 0.5rem; color: #34d399;">${input.files[0].name}</p>
+            `;
+            }
+        }
+
+        document.getElementById('scanForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const form = e.target;
+            const formData = new FormData(form);
+
+            // Handle checkbox manually
+            formData.set('is_mixed_cropping', document.getElementById('mixedCheck').checked);
+
+            // UI Updates
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('results-area').style.display = 'none';
+            form.querySelector('button').disabled = true;
+            form.querySelector('button').style.opacity = '0.7';
+
+            try {
+                const response = await fetch('/api/v1/crop_scan', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.detail || 'Analysis failed');
+                }
+
+                // Render Results
+                renderResults(data);
+
+            } catch (error) {
+                alert('Error: ' + error.message);
+            } finally {
+                document.getElementById('loading').style.display = 'none';
+                form.querySelector('button').disabled = false;
+                form.querySelector('button').style.opacity = '1';
+            }
+        });
+
+        function renderResults(data) {
+            const resultsArea = document.getElementById('results-area');
+            resultsArea.style.display = 'block';
+
+            // Header
+            // Header
+            const diseaseName = data.disease_detected || "Healthy";
+            const lowerName = diseaseName.toLowerCase().trim();
+            const isHealthy = ["healthy", "none", "n/a", "no visible disease", "none detected", "ಆರೋಗ್ಯಕರ", "ಯಾವುದೇ ರೋಗವಿಲ್ಲ"].includes(lowerName) || lowerName.includes("healthy") || lowerName.includes("no disease");
+
+            document.getElementById('res-disease-name').textContent = diseaseName;
+
+            const badge = document.getElementById('res-status');
+            badge.textContent = isHealthy ? "Healthy Plant" : "Disease Detected";
+            badge.className = `status-badge ${isHealthy ? 'status-healthy' : 'status-disease'}`;
+
+            // Knowledge Base Section
+            const kbSection = document.getElementById('kb-section');
+            if (data.kb_treatment) {
+                kbSection.style.display = 'block';
+                document.getElementById('kb-text').innerText = data.kb_treatment;
+            } else {
+                kbSection.style.display = 'none';
+            }
+
+            // Images
+            const bboxContainer = document.getElementById('bbox-container');
+            const bboxImg = document.getElementById('res-bbox-img');
+
+            if (data.bbox_image_url) {
+                bboxContainer.style.display = 'block';
+                bboxImg.src = data.bbox_image_url;
+            } else {
+                bboxContainer.style.display = 'none';
+            }
+
+            // Full JSON
+            document.getElementById('res-json').textContent = JSON.stringify(data, null, 2);
+        }
+    </script>
+
+</body>
+
+</html>
