@@ -11,7 +11,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision = 'dpt2026012801'
-down_revision = 'drop_async_jobs_table' # Ensure this matches the actual latest
+down_revision = 'ad5358a79147' # Point to the merge revision to ensure linear history
 branch_labels = None
 depends_on = None
 

@@ -24,8 +24,7 @@ RUN pip install --no-cache-dir -r requirements-shared.txt
 # Copy the rest of the application
 COPY . .
 
-# Remove ghost migration file that persists in Jenkins workspace (likely root-owned)
-RUN rm -f migrations/versions/*drop_pay_tables_2026*
+
 
 # Expose the port
 EXPOSE 8000
