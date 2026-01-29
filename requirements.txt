@@ -1,7 +1,7 @@
-fastapi
+fastapi==0.115.6
 uvicorn
-sqlalchemy[asyncio]
-asyncpg
+sqlalchemy==2.0.36
+asyncpg==0.30.0
 google-genai
 boto3
 pydantic-settings
@@ -13,3 +13,5 @@ alembic
 redis>=5.0.0
 aioredis>=2.0.0
 psycopg2-binary
+starlette==0.41.3
+pydantic==2.10.2
