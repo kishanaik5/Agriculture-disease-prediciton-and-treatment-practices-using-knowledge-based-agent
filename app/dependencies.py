@@ -12,11 +12,25 @@ def master_key_dependency(request: "Request"):
 
 def require_auth(request: Request) -> str:
     """Dependency to require authentication on routes."""
-    if not request.state.upstreamId:
+    # Try getting from state (set by middleware)
+    upstream_id = getattr(request.state, "upstreamId", None)
+    
+    # If not in state, try header directly
+    if not upstream_id:
+        upstream_id = request.headers.get("X-Upstream-Id")
+        # Optional: set it back to state for other dependencies
+        if upstream_id:
+            request.state.upstreamId = upstream_id
+
+    if not upstream_id:
         raise HTTPException(status_code=401, detail="Authentication required")
-    return request.state.upstreamId
+        
+    return upstream_id
 
 
 def get_current_user_id(request: Request) -> str | None:
     """Dependency to get current user ID (optional auth)."""
-    return getattr(request.state, 'upstreamId', None)
+    upstream_id = getattr(request.state, 'upstreamId', None)
+    if not upstream_id:
+        upstream_id = request.headers.get("X-Upstream-Id")
+    return upstream_id
