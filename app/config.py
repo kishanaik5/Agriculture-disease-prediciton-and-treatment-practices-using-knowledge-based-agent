@@ -65,6 +65,9 @@ class Settings(BaseSettings):
     PAYMENT_API_KEY: Optional[str] = None
     PAYMENT_WEBHOOK_SECRET: Optional[str] = None
 
+    # Subscription Configuration
+    SUBSCRIPTION_BASE_URL: str = "https://dev-subscriptions.kissansampurna.com"
+
     @field_validator('GEMINI_API_KEY')
     @classmethod
     def validate_credentials(cls, v: str) -> str:
