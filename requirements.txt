@@ -15,3 +15,6 @@ aioredis>=2.0.0
 psycopg2-binary
 starlette==0.41.3
 pydantic==2.10.2
+PyJWT
+fastapi-decorators~=1.0.6
+python-dotenv~=1.0.1
