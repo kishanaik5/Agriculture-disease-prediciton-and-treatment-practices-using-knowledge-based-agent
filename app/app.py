@@ -57,6 +57,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ⚠️ TEMPORARY: Debug middleware to diagnose prod auth issues
+# Remove this once auth is working correctly
+from app.middlewares.auth_debug import AuthDebugMiddleware
+app.add_middleware(AuthDebugMiddleware, jwt_secret=settings.JWT_SECRET)
+
+from SharedBackend.middlewares.AuthMiddleware import JWTAuthMiddleware
+app.add_middleware(JWTAuthMiddleware, jwt_secret=settings.JWT_SECRET)
+
 from fastapi.staticfiles import StaticFiles
 
 @app.get("/favicon.ico", include_in_schema=False)
@@ -137,8 +145,8 @@ async def health_check():
 # Include Routers
 app.include_router(scan_router, prefix=settings.API_V1_STR)
 app.include_router(async_scan_router, prefix=settings.API_V1_STR)
-from app.routers.v1.payment import router as payment_router
-app.include_router(payment_router, prefix=settings.API_V1_STR)
+# from app.routers.v1.payment import router as payment_router
+# app.include_router(payment_router, prefix=settings.API_V1_STR)
 
 from app.routers.v1.translation import router as translation_router
 app.include_router(translation_router, prefix=settings.API_V1_STR)
