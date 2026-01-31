@@ -59,17 +59,16 @@ app.add_middleware(
 
 # ⚠️ TEMPORARY: Debug middleware to diagnose prod auth issues
 # Remove this once auth is working correctly
-try:
-    from app.middlewares.auth_debug import AuthDebugMiddleware
-    # Try to get JWT_SECRET, but don't crash if missing
-    jwt_secret_for_debug = getattr(settings, 'JWT_SECRET', None)
-    app.add_middleware(AuthDebugMiddleware, jwt_secret=jwt_secret_for_debug)
-    print("✅ AuthDebugMiddleware initialized")
-except Exception as e:
-    print(f"⚠️ Could not initialize AuthDebugMiddleware: {e}")
+from app.middlewares.auth_debug import AuthDebugMiddleware
+app.add_middleware(AuthDebugMiddleware)  # Will get JWT_SECRET from environment
 
 from SharedBackend.middlewares.AuthMiddleware import JWTAuthMiddleware
-app.add_middleware(JWTAuthMiddleware, jwt_secret=settings.JWT_SECRET)
+# JWTAuthMiddleware will get secret from environment
+import os
+jwt_secret = os.getenv("JWT_SECRET", "")
+if not jwt_secret:
+    print("⚠️ WARNING: JWT_SECRET not found in environment - auth will fail")
+app.add_middleware(JWTAuthMiddleware, jwt_secret=jwt_secret)
 
 from fastapi.staticfiles import StaticFiles
 
