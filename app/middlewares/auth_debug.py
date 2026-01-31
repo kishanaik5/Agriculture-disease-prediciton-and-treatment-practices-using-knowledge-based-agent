@@ -3,6 +3,7 @@ Temporary debug middleware for diagnosing production auth issues.
 Remove this file once auth is working correctly.
 """
 import logging
+import os
 from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi import Request
 import jwt
@@ -14,11 +15,15 @@ class AuthDebugMiddleware(BaseHTTPMiddleware):
     """
     Debug middleware to log all auth-related information.
     This should be added BEFORE JWTAuthMiddleware in the middleware stack.
+    Gets JWT_SECRET directly from environment to avoid startup crashes.
     """
     
-    def __init__(self, app, jwt_secret: str):
+    def __init__(self, app, jwt_secret: str = None):
         super().__init__(app)
-        self.jwt_secret = jwt_secret
+        # Try to get secret from parameter, then fallback to environment
+        self.jwt_secret = jwt_secret or os.getenv("JWT_SECRET") or ""
+        if not self.jwt_secret:
+            logger.warning("⚠️ AuthDebugMiddleware: No JWT_SECRET available - token verification will fail")
     
     async def dispatch(self, request: Request, call_next):
         # Only log for protected endpoints

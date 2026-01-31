@@ -59,8 +59,14 @@ app.add_middleware(
 
 # ⚠️ TEMPORARY: Debug middleware to diagnose prod auth issues
 # Remove this once auth is working correctly
-from app.middlewares.auth_debug import AuthDebugMiddleware
-app.add_middleware(AuthDebugMiddleware, jwt_secret=settings.JWT_SECRET)
+try:
+    from app.middlewares.auth_debug import AuthDebugMiddleware
+    # Try to get JWT_SECRET, but don't crash if missing
+    jwt_secret_for_debug = getattr(settings, 'JWT_SECRET', None)
+    app.add_middleware(AuthDebugMiddleware, jwt_secret=jwt_secret_for_debug)
+    print("✅ AuthDebugMiddleware initialized")
+except Exception as e:
+    print(f"⚠️ Could not initialize AuthDebugMiddleware: {e}")
 
 from SharedBackend.middlewares.AuthMiddleware import JWTAuthMiddleware
 app.add_middleware(JWTAuthMiddleware, jwt_secret=settings.JWT_SECRET)
