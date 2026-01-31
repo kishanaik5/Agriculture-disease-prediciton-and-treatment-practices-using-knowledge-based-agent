@@ -37,6 +37,8 @@ pipeline {
                             git submodule update --init --recursive
 
                             echo "Submodule URLs converted to SSH successfully!"
+                            echo "Current submodule status:"
+                            git submodule status
                         '''
                     }
                 }
