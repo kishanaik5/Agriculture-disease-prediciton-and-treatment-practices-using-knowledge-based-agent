@@ -166,9 +166,22 @@ class MasterIcon(BaseSchema):
     category_id = Column(String(50), unique=True, index=True)
     category_type = Column(String(50), index=True) # crop, fruit, vegetable
     url = Column(Text, nullable=False)
-    name_en = Column(String(255), nullable=True)
-    name_kn = Column(String(255), nullable=True)
-    name_hn = Column(String(255), nullable=True)
+    
+    # Multi-language names
+    name_en = Column(String(255), nullable=True)  # English
+    name_kn = Column(String(255), nullable=True)  # Kannada
+    name_hn = Column(String(255), nullable=True)  # Hindi
+    name_ta = Column(String(255), nullable=True)  # Tamil
+    name_te = Column(String(255), nullable=True)  # Telugu
+    name_ml = Column(String(255), nullable=True)  # Malayalam
+    name_mr = Column(String(255), nullable=True)  # Marathi
+    name_gu = Column(String(255), nullable=True)  # Gujarati
+    name_bn = Column(String(255), nullable=True)  # Bengali
+    name_or = Column(String(255), nullable=True)  # Odia
+    name_pa = Column(String(255), nullable=True)  # Punjabi
+    name_ur = Column(String(255), nullable=True)  # Urdu
+    name_ne = Column(String(255), nullable=True)  # Nepali
+
 
 
 

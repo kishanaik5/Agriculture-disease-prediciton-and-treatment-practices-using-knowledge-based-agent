@@ -22,6 +22,12 @@ import string
 from datetime import datetime
 from app.config import get_settings
 from typing import Optional, Any, Dict
+import asyncio  # For retry sleep logic
+from app.exceptions import (
+    SubscriptionLimitExceeded,
+    SubscriptionInvalid,
+    SubscriptionServiceUnavailable
+)
 
 from zoneinfo import ZoneInfo
 from app.database import SessionLocal
@@ -30,6 +36,16 @@ from pydantic import BaseModel
 # from services.redis_manager import task_manager # Removed Redis dependency
 
 logger = logging.getLogger(__name__)
+
+# =============================================================================
+# FEATURE FLAG: Bounding Box Generation
+# =============================================================================
+# Set to True to enable bounding box generation and upload to S3
+# Set to False to disable bounding box generation (bbox_image_url will be NULL)
+# 
+# 📍 PRODUCTION TOGGLE: Change this line to enable/disable bbox generation
+ENABLE_BOUNDING_BOX_GENERATION = False  # TESTING: Disabled for verification
+# =============================================================================
 
 class BytesUploadFile:
     def __init__(self, data: bytes, filename: str, content_type: str = "image/jpeg"):
@@ -45,12 +61,42 @@ router = APIRouter()
 
 
 from app.models.scan import MasterIcon
+from app.constants.languages import SUPPORTED_LANGUAGE_CODES, DEFAULT_LANGUAGE
 
 @router.get("/All", tags=["Show Details"])
-async def get_all_items(language: str = "en", name: Optional[str] = None, category: Optional[str] = None, category_id: Optional[str] = None, db: AsyncSession = Depends(get_db)):
+async def get_all_items(
+    language: str = Query(DEFAULT_LANGUAGE, description="Language code: en, kn, hn, ta, te, ml, mr, gu, bn, or, pa, ur, ne"), 
+    name: Optional[str] = None, 
+    category: Optional[str] = None, 
+    category_id: Optional[str] = None, 
+    db: AsyncSession = Depends(get_db)
+):
     """
     Get all supported items from MasterIcon DB.
+    
+    Returns master icons with names in the requested language.
+    If the requested language is not available for an item, falls back to English.
+    
+    **Supported languages:**
+    - en: English (default)
+    - kn: Kannada
+    - hn: Hindi
+    - ta: Tamil
+    - te: Telugu
+    - ml: Malayalam
+    - mr: Marathi
+    - gu: Gujarati
+    - bn: Bengali
+    - or: Odia
+    - pa: Punjabi
+    - ur: Urdu
+    - ne: Nepali
     """
+    # Validate language
+    lang = language.lower()
+    if lang not in SUPPORTED_LANGUAGE_CODES:
+        lang = DEFAULT_LANGUAGE
+    
     stmt = select(MasterIcon)
     if category:
         # DB stores "crop", "fruit", "vegetable"
@@ -67,9 +113,35 @@ async def get_all_items(language: str = "en", name: Optional[str] = None, catego
         stmt = stmt.where(MasterIcon.category_id == category_id)
         
     if name:
-        # Search in relevant language or english?
-        # User said "manually make a changes for the language", so maybe search in en?
-        stmt = stmt.where(MasterIcon.name_en.ilike(f"%{name}%"))
+        # Search in the requested language field or English
+        if lang == 'en':
+            stmt = stmt.where(MasterIcon.name_en.ilike(f"%{name}%"))
+        elif lang == 'kn':
+            stmt = stmt.where(MasterIcon.name_kn.ilike(f"%{name}%"))
+        elif lang == 'hn':
+            stmt = stmt.where(MasterIcon.name_hn.ilike(f"%{name}%"))
+        elif lang == 'ta':
+            stmt = stmt.where(MasterIcon.name_ta.ilike(f"%{name}%"))
+        elif lang == 'te':
+            stmt = stmt.where(MasterIcon.name_te.ilike(f"%{name}%"))
+        elif lang == 'ml':
+            stmt = stmt.where(MasterIcon.name_ml.ilike(f"%{name}%"))
+        elif lang == 'mr':
+            stmt = stmt.where(MasterIcon.name_mr.ilike(f"%{name}%"))
+        elif lang == 'gu':
+            stmt = stmt.where(MasterIcon.name_gu.ilike(f"%{name}%"))
+        elif lang == 'bn':
+            stmt = stmt.where(MasterIcon.name_bn.ilike(f"%{name}%"))
+        elif lang == 'or':
+            stmt = stmt.where(MasterIcon.name_or.ilike(f"%{name}%"))
+        elif lang == 'pa':
+            stmt = stmt.where(MasterIcon.name_pa.ilike(f"%{name}%"))
+        elif lang == 'ur':
+            stmt = stmt.where(MasterIcon.name_ur.ilike(f"%{name}%"))
+        elif lang == 'ne':
+            stmt = stmt.where(MasterIcon.name_ne.ilike(f"%{name}%"))
+        else:
+            stmt = stmt.where(MasterIcon.name_en.ilike(f"%{name}%"))
         
     res = await db.execute(stmt)
     items = res.scalars().all()
@@ -77,12 +149,33 @@ async def get_all_items(language: str = "en", name: Optional[str] = None, catego
     # Format Response
     resp_list = []
     for i in items:
-        # Select name based on lang
-        display_name = i.name_en
-        if language == 'kn' and i.name_kn:
+        # Get name in requested language, fallback to English if not available
+        display_name = i.name_en  # Default fallback
+        
+        if lang == 'kn' and i.name_kn:
             display_name = i.name_kn
-        elif language == 'hi' and i.name_hn:
+        elif lang == 'hn' and i.name_hn:
             display_name = i.name_hn
+        elif lang == 'ta' and i.name_ta:
+            display_name = i.name_ta
+        elif lang == 'te' and i.name_te:
+            display_name = i.name_te
+        elif lang == 'ml' and i.name_ml:
+            display_name = i.name_ml
+        elif lang == 'mr' and i.name_mr:
+            display_name = i.name_mr
+        elif lang == 'gu' and i.name_gu:
+            display_name = i.name_gu
+        elif lang == 'bn' and i.name_bn:
+            display_name = i.name_bn
+        elif lang == 'or' and i.name_or:
+            display_name = i.name_or
+        elif lang == 'pa' and i.name_pa:
+            display_name = i.name_pa
+        elif lang == 'ur' and i.name_ur:
+            display_name = i.name_ur
+        elif lang == 'ne' and i.name_ne:
+            display_name = i.name_ne
             
         resp_list.append({
             "Name": display_name,
@@ -367,36 +460,135 @@ async def add_icon(
 
 
 
-# Validates subscription consumption
-# Validates subscription consumption
-async def verify_consumption(user_id: str, subscription_id: str, action: str = "scan", quantity: int = 1) -> bool:
+# =============================================================================
+# Subscription Verification with Improved Error Handling
+# =============================================================================
+
+async def verify_consumption(
+    user_id: str, 
+    subscription_id: str, 
+    action: str = "scan", 
+    quantity: int = 1,
+    max_retries: int = 2,
+    timeout: float = 5.0
+) -> bool:
+    """
+    Validates if user can consume subscription quota with proper error handling.
+    
+    Args:
+        user_id: User's unique ID
+        subscription_id: Subscription identifier
+        action: Action type (default: "scan")
+        quantity: Number of units to consume (default: 1)
+        max_retries: Number of retry attempts for transient failures (default: 2)
+        timeout: Request timeout in seconds (default: 5.0)
+    
+    Returns:
+        True if consumption is allowed
+    
+    Raises:
+        SubscriptionLimitExceeded: User quota exhausted (403)
+        SubscriptionInvalid: Invalid or expired subscription_id (400)
+        SubscriptionServiceUnavailable: Service down/timeout (503)
+    """
     settings = get_settings()
-    url = f"{settings.SUBSCRIPTION_BASE_URL}/api/v1/usage/consume/verify"
+    # Sanitize URL to prevent "Invalid character in header" errors
+    base_url = settings.SUBSCRIPTION_BASE_URL.strip().rstrip('/')
+    url = f"{base_url}/api/v1/usage/consume/verify"
     
     payload = {
         "action": action,
-        "subscription_id": subscription_id, 
+        "subscription_id": subscription_id,
         "quantity": quantity
     }
     
     headers = {
-        "x-upid": user_id,
+        "x-upid": user_id.strip() if user_id else "",
         "Content-Type": "application/json",
         "accept": "application/json"
     }
     
-    try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(url, json=payload, headers=headers, timeout=10.0)
-            if resp.status_code == 200:
-                data = resp.json()
-                return data.get("allowed", False)
-            else:
-                logger.error(f"Subscription Verify Failed: {resp.status_code} {resp.text}")
-                return False
-    except Exception as e:
-        logger.error(f"Subscription Verify Exception: {e}")
-        return False
+    last_error = None
+    
+    for attempt in range(max_retries):
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    url, 
+                    json=payload, 
+                    headers=headers, 
+                    timeout=timeout
+                )
+                
+                if resp.status_code == 200:
+                    data = resp.json()
+                    allowed = data.get("allowed", False)
+                    
+                    if not allowed:
+                        # Service returned "not allowed" - quota exceeded
+                        reason = data.get("reason", "Subscription limit exceeded")
+                        logger.warning(f"Subscription limit exceeded for user {user_id}: {reason}")
+                        raise SubscriptionLimitExceeded(reason)
+                    
+                    # Success - consumption allowed
+                    return True
+                    
+                elif resp.status_code == 400:
+                    # Invalid subscription_id - don't retry
+                    logger.error(f"Invalid subscription ID: {subscription_id}")
+                    raise SubscriptionInvalid("Invalid subscription ID. Please check your subscription details.")
+                    
+                elif resp.status_code == 404:
+                    # Subscription not found - don't retry
+                    logger.error(f"Subscription not found: {subscription_id}")
+                    raise SubscriptionInvalid("Subscription not found. Please contact support.")
+                    
+                elif resp.status_code >= 500:
+                    # Server error - retry
+                    logger.warning(f"Subscription service error {resp.status_code}, retry {attempt + 1}/{max_retries}")
+                    last_error = SubscriptionServiceUnavailable(f"Subscription service is experiencing issues. Please try again.")
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(0.5 * (attempt + 1))  # Exponential backoff
+                    continue
+                    
+                else:
+                    # Other errors (e.g., 401, 403 from service itself) - retry once
+                    logger.warning(f"Unexpected status {resp.status_code}: {resp.text}, retry {attempt + 1}/{max_retries}")
+                    last_error = SubscriptionServiceUnavailable(f"Subscription service returned unexpected response.")
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(0.5 * (attempt + 1))
+                    continue
+                    
+        except httpx.TimeoutException as e:
+            logger.warning(f"Subscription verify timeout (attempt {attempt + 1}/{max_retries}): {str(e)}")
+            last_error = SubscriptionServiceUnavailable("Subscription service is taking too long to respond. Please try again.")
+            if attempt < max_retries - 1:
+                await asyncio.sleep(0.5 * (attempt + 1))
+                continue
+            
+        except httpx.NetworkError as e:
+            logger.warning(f"Network error connecting to subscription service (attempt {attempt + 1}/{max_retries}): {str(e)}")
+            last_error = SubscriptionServiceUnavailable("Cannot connect to subscription service. Please check your network.")
+            if attempt < max_retries - 1:
+                await asyncio.sleep(0.5 * (attempt + 1))
+            continue
+        
+        except httpx.RequestError as e:
+            # Catches invalid URL, invalid headers, etc.
+            logger.error(f"HTTP request error (attempt {attempt + 1}/{max_retries}): {str(e)}")
+            last_error = SubscriptionServiceUnavailable(f"Error communicating with subscription service: {str(e)}")
+            if attempt < max_retries - 1:
+                await asyncio.sleep(0.5 * (attempt + 1))
+            continue
+            
+        except (SubscriptionLimitExceeded, SubscriptionInvalid):
+            # Don't retry these - they're deterministic
+            raise
+    
+    # All retries failed
+    if last_error:
+        raise last_error
+    raise SubscriptionServiceUnavailable("Subscription verification failed after multiple attempts. Please try again later.")
 
 # Confirms consumption
 # Confirms consumption
@@ -714,7 +906,7 @@ async def analyze_qa(
     file: UploadFile = File(...),
     user_id: str = Depends(require_auth),
     category_id: str = Form(...),
-    language: str = Form("en"), # Added language support
+    language: str = Form("en", description="Language code: en, kn, hn, ta, te, ml, mr, gu, bn, or or"), # Supported: English, Kannada, Hindi, Tamil, Telugu, Malayalam, Marathi, Gujarati, Bengali, Odia
     subscription_id: Optional[str] = Form(None), # Added subscription_id with fallback
     db: AsyncSession = Depends(get_db)
 ):
@@ -734,10 +926,27 @@ async def analyze_qa(
         # Fallback to random if not provided (per user request "keep random value as of now")
         subscription_id = ''.join(random.choices(string.ascii_letters + string.digits, k=16))
 
-    # 1. Verify Subscription
-    is_allowed = await verify_consumption(user_id, subscription_id, action="scan")
-    if not is_allowed:
-        raise HTTPException(status_code=403, detail="Subscription limit exceeded or invalid. Please upgrade your plan.")
+    # 1. Verify Subscription with improved error handling
+    try:
+        await verify_consumption(user_id, subscription_id, action="scan")
+    except SubscriptionLimitExceeded as e:
+        # User has exceeded their quota
+        raise HTTPException(
+            status_code=403,
+            detail=str(e) or "Subscription limit exceeded. Please upgrade your plan."
+        )
+    except SubscriptionInvalid as e:
+        # Invalid subscription_id or not found
+        raise HTTPException(
+            status_code=400,
+            detail=str(e) or "Invalid subscription. Please check your subscription details."
+        )
+    except SubscriptionServiceUnavailable as e:
+        # Service is down or timing out
+        raise HTTPException(
+            status_code=503,
+            detail=str(e) or "Subscription service is temporarily unavailable. Please try again in a moment."
+        )
 
     # 2. Lookup Category & Crop Name
     stmt = select(MasterIcon).where(MasterIcon.category_id == category_id)
@@ -984,16 +1193,22 @@ async def _core_process_generation(
             if task_id: await _update_job_status(db, task_id, "failed", {"error": f"Analysis Failed: {e}", **state})
             raise HTTPException(status_code=500, detail="Analysis Failed")
 
-        # Process BBox Image
+        # Process BBox Image (controlled by feature flag)
         processed_url = None
-        if bbox_list:
+        if ENABLE_BOUNDING_BOX_GENERATION and bbox_list:
             try:
+                logger.info(f"🎯 Bounding box generation ENABLED - Processing {len(bbox_list)} boxes")
                 p_bytes = image_service.draw_bounding_boxes(image_bytes, bbox_list)
                 new_key = f"processed_{uuid.uuid4()}.jpg"
                 p_wrapper = BytesUploadFile(p_bytes, new_key, "image/jpeg")
                 processed_url = await s3_service_public.upload_file(file=p_wrapper, prefix="dev/processed/")
+                logger.info(f"✅ Bounding box image uploaded: {processed_url}")
             except Exception as e:
                 logger.error(f"BBox draw/upload failed: {e}")
+        elif not ENABLE_BOUNDING_BOX_GENERATION:
+            logger.info(f"⏭️  Bounding box generation DISABLED - Skipping bbox processing")
+        else:
+            logger.info(f"⏭️  No bounding boxes detected - Skipping bbox processing")
 
         if task_id:
             state["progress"] = 60
@@ -1002,7 +1217,7 @@ async def _core_process_generation(
 
         # Update DB (Base English Report)
         report.analysis_raw = full_analysis
-        report.bbox_image_url = processed_url
+        report.bbox_image_url = processed_url  # Will be NULL if feature is disabled
         report.desired_language_output = lang
         
         # 2. Update Status to TRANSLATION_AWAITING
@@ -1169,7 +1384,7 @@ async def generate_full_report(
     user_id: str = Depends(require_auth),
     report_id: str = Form(...),
     category: str = Form(...), 
-    language: str = Form(..., description="Language code: en or kn"), 
+    language: str = Form(..., description="Language code: en, kn, hn, ta, te, ml, mr, gu, bn, or or"), 
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1516,7 +1731,7 @@ async def analyze_crop(
     # New Inputs
     user_id: str = Depends(require_auth),
     crop_name: str = Form(...),
-    language: str = Form("en", description="Language code: en or kn"),
+    language: str = Form("en", description="Language code: en, kn, hn, ta, te, ml, mr, gu, bn, or or"),
     db: AsyncSession = Depends(get_db)
 ):
     """

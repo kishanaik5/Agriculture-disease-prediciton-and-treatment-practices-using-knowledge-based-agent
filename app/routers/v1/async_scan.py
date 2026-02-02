@@ -20,6 +20,16 @@ from app.services.knowledge import knowledge_service
 
 logger = logging.getLogger(__name__)
 
+# =============================================================================
+# FEATURE FLAG: Bounding Box Generation
+# =============================================================================
+# Set to True to enable bounding box generation and upload to S3
+# Set to False to disable bounding box generation (bbox_image_url will be NULL)
+# 
+# 📍 PRODUCTION TOGGLE: Change this line to enable/disable bbox generation
+ENABLE_BOUNDING_BOX_GENERATION = False  # TESTING: Disabled for verification
+# =============================================================================
+
 class BytesUploadFile:
     def __init__(self, data: bytes, filename: str, content_type: str = "image/jpeg"):
         self.filename = filename
@@ -113,8 +123,8 @@ async def process_crop_scan_async(
         
         processed_url = None
         
-        # Bounding boxes for diseased crops
-        if not is_healthy and disease_name:
+        # Bounding boxes for diseased crops (controlled by feature flag)
+        if ENABLE_BOUNDING_BOX_GENERATION and not is_healthy and disease_name:
             await _update_status("processing", {"progress": 70})
             
             if is_produce:
@@ -123,6 +133,7 @@ async def process_crop_scan_async(
                 boxes = await gemini_service.generate_bbox_crop(image_bytes, disease_name, mime_type=content_type)
             
             if boxes:
+                logger.info(f"🎯 Bounding box generation ENABLED - Processing {len(boxes)} boxes")
                 processed_image_bytes = image_service.draw_bounding_boxes(image_bytes, boxes)
                 
                 timestamp_str = datetime.now().strftime("%Y%m%d%H%M%S")
@@ -134,6 +145,9 @@ async def process_crop_scan_async(
                 
                 processed_wrapper = BytesUploadFile(processed_image_bytes, f"processed_{filename}", "image/jpeg")
                 processed_url = await s3_service_public.upload_file(file=processed_wrapper, prefix="dev/processed/")
+                logger.info(f"✅ Bounding box image uploaded: {processed_url}")
+        elif not ENABLE_BOUNDING_BOX_GENERATION:
+            logger.info(f"⏭️  Bounding box generation DISABLED - Skipping bbox processing")
         
         await _update_status("processing", {"progress": 90})
         
@@ -258,7 +272,7 @@ async def analyze_crop_async(
     file: UploadFile = File(...),
     user_id: str = Form(..., description="User ID string (e.g. users_xxx)"),
     crop_name: str = Form(...),
-    language: str = Form("en", description="Language code: en or kn"),
+    language: str = Form("en", description="Language code: en, kn, hn, ta, te, ml, mr, gu, bn, or or"),
     is_mixed_cropping: bool = Form(False),
     acres_of_land: Optional[str] = Form(None)
 ):
