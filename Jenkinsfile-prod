@@ -3,10 +3,10 @@ pipeline {
 
     environment {
         AWS_REGION = 'ap-south-1'
-        ECR_REPOSITORY = '400115659362.dkr.ecr.ap-south-1.amazonaws.com/kissan-cv-dev'
-        ECS_CLUSTER = 'KissanSampurna-dev'
-        ECS_TASK_DEFINITION_FAMILY = 'kissan-cv-dev'
-        ECS_SERVICE = 'kissan-cv-dev'
+        ECR_REPOSITORY = '400115659362.dkr.ecr.ap-south-1.amazonaws.com/kissan-cv-prod'
+        ECS_CLUSTER = 'KissanSampurna-prod'
+        ECS_TASK_DEFINITION_FAMILY = 'kissan-cv-prod'
+        ECS_SERVICE = 'kissan-cv-prod'
         IMAGE_TAG = UUID.randomUUID().toString().replace('-', '')
         CPU = "256"
         MEMORY = "512"
