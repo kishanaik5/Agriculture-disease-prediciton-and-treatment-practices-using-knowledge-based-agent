@@ -1,5 +1,5 @@
 {
-    "family": "kissan-cv-dev",
+    "family": "kissan-cv-prod",
     "containerDefinitions": [
         {
             "cpu": 0,
@@ -9,7 +9,7 @@
             "logConfiguration": {
                 "logDriver": "awslogs",
                 "options": {
-                    "awslogs-group": "/ecs/kissan-cv-dev",
+                    "awslogs-group": "/ecs/kissan-cv-prod",
                     "awslogs-create-group": "true",
                     "awslogs-region": "ap-south-1",
                     "awslogs-stream-prefix": "ecs"
@@ -23,98 +23,98 @@
                     "appProtocol": "http",
                     "containerPort": 8000,
                     "hostPort": 8000,
-                    "name": "kissan-cv-dev-8000-tcp",
+                    "name": "kissan-cv-prod-8000-tcp",
                     "protocol": "tcp"
                 }
             ],
             "secrets": [
                 {
                     "name": "PROJECT_NAME",
-                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-cv-dev/PROJECT_NAME"
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-cv-prod/PROJECT_NAME"
                 },
                 {
                     "name": "POSTGRES_DB",
-                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-cv-dev/POSTGRES_DB"
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-cv-prod/POSTGRES_DB"
                 },
                 {
                     "name": "POSTGRES_PORT",
-                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-cv-dev/POSTGRES_PORT"
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-cv-prod/POSTGRES_PORT"
                 },
                 {
                     "name": "POSTGRES_SERVER",
-                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-cv-dev/POSTGRES_SERVER"
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-cv-prod/POSTGRES_SERVER"
                 },
                 {
                     "name": "POSTGRES_PASSWORD",
-                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-cv-dev/POSTGRES_PASSWORD"
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-cv-prod/POSTGRES_PASSWORD"
                 },
                 {
                     "name": "POSTGRES_USER",
-                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-cv-dev/POSTGRES_USER"
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-cv-prod/POSTGRES_USER"
                 },
                 {
                     "name": "API_V1_STR",
-                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-cv-dev/API_V1_STR"
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-cv-prod/API_V1_STR"
                 },
                 {
                     "name": "ENV_MODE",
-                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-cv-dev/ENV_MODE"
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-cv-prod/ENV_MODE"
                 },
                 {
                     "name": "SECRET_KEY",
-                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-cv-dev/SECRET_KEY"
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-cv-prod/SECRET_KEY"
                 },
                 {
                     "name": "ACCESS_TOKEN_EXPIRE_MINUTES",
-                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-cv-dev/ACCESS_TOKEN_EXPIRE_MINUTES"
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-cv-prod/ACCESS_TOKEN_EXPIRE_MINUTES"
                 },
                 {
                     "name": "GEMINI_API_KEY",
-                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-cv-dev/GEMINI_API_KEY"
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-cv-prod/GEMINI_API_KEY"
                 },
                 {
                     "name": "GEMINI_MODEL_FLASH",
-                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-cv-dev/GEMINI_MODEL_FLASH"
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-cv-prod/GEMINI_MODEL_FLASH"
                 },
                 {
                     "name": "GEMINI_MODEL_PRO",
-                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-cv-dev/GEMINI_MODEL_PRO"
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-cv-prod/GEMINI_MODEL_PRO"
                 },
                 {
                     "name": "AWS_REGION",
-                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-cv-dev/AWS_REGION"
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-cv-prod/AWS_REGION"
                 },
                 {
                     "name": "S3_BUCKET_PRIVATE",
-                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-cv-dev/S3_BUCKET_PRIVATE"
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-cv-prod/S3_BUCKET_PRIVATE"
                 },
                 {
                     "name": "S3_BUCKET_PUBLIC",
-                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-cv-dev/S3_BUCKET_PUBLIC"
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-cv-prod/S3_BUCKET_PUBLIC"
                 },
                 {
                     "name": "PAYMENT_BASE_URL",
-                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-cv-dev/PAYMENT_BASE_URL"
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-cv-prod/PAYMENT_BASE_URL"
                 },
                 {
                     "name": "PAYMENT_API_KEY",
-                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-cv-dev/PAYMENT_API_KEY"
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-cv-prod/PAYMENT_API_KEY"
                 },
                 {
                     "name": "JWT_SECRET",
-                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-cv-dev/JWT_SECRET"
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-cv-prod/JWT_SECRET"
                 },
                 {
                     "name": "SUBSCRIPTION_BASE_URL",
-                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-cv-dev/SUBSCRIPTION_BASE_URL"
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-cv-prod/SUBSCRIPTION_BASE_URL"
                 }
             ],
             "systemControls": [],
             "volumesFrom": []
         }
     ],
-    "taskRoleArn": "arn:aws:iam::400115659362:role/ecsExecutionRole-kissan-cv-dev",
-    "executionRoleArn": "arn:aws:iam::400115659362:role/ecsExecutionRole-kissan-cv-dev",
+    "taskRoleArn": "arn:aws:iam::400115659362:role/ecsExecutionRole-kissan-cv-prod",
+    "executionRoleArn": "arn:aws:iam::400115659362:role/ecsExecutionRole-kissan-cv-prod",
     "networkMode": "awsvpc",
     "volumes": [],
     "placementConstraints": [],
