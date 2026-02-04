@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 # Set to False to disable bounding box generation (bbox_image_url will be NULL)
 # 
 # 📍 PRODUCTION TOGGLE: Change this line to enable/disable bbox generation
-ENABLE_BOUNDING_BOX_GENERATION = False  # TESTING: Disabled for verification
+ENABLE_BOUNDING_BOX_GENERATION = True  # TESTING: Disabled for verification
 # =============================================================================
 
 class BytesUploadFile:
@@ -535,21 +535,39 @@ async def verify_consumption(
                     
                 elif resp.status_code == 400:
                     # Invalid subscription_id - don't retry
+                    error_detail = resp.json() if resp.content else {"detail": "Invalid subscription ID"}
                     logger.error(f"Invalid subscription ID: {subscription_id}")
-                    raise SubscriptionInvalid("Invalid subscription ID. Please check your subscription details.")
+                    exc = SubscriptionInvalid()
+                    exc.status_code = resp.status_code
+                    exc.response = error_detail
+                    raise exc
                     
                 elif resp.status_code == 404:
                     # Subscription not found - don't retry
+                    error_detail = resp.json() if resp.content else {"detail": "Subscription not found"}
                     logger.error(f"Subscription not found: {subscription_id}")
-                    raise SubscriptionInvalid("Subscription not found. Please contact support.")
+                    exc = SubscriptionInvalid()
+                    exc.status_code = resp.status_code
+                    exc.response = error_detail
+                    raise exc
+                    
+                elif resp.status_code == 480:
+                    # Custom subscription service error - pass through
+                    error_detail = resp.json() if resp.content else {"detail": "Subscription error"}
+                    logger.error(f"Subscription service returned 480: {error_detail}")
+                    exc = SubscriptionInvalid()
+                    exc.status_code = resp.status_code
+                    exc.response = error_detail
+                    raise exc
                     
                 elif resp.status_code >= 500:
-                    # Server error - retry
-                    logger.warning(f"Subscription service error {resp.status_code}, retry {attempt + 1}/{max_retries}")
-                    last_error = SubscriptionServiceUnavailable(f"Subscription service is experiencing issues. Please try again.")
-                    if attempt < max_retries - 1:
-                        await asyncio.sleep(0.5 * (attempt + 1))  # Exponential backoff
-                    continue
+                    # Server error - pass through with exact error
+                    error_detail = resp.json() if resp.content else {"detail": "Subscription service error"}
+                    logger.error(f"Subscription service error {resp.status_code}: {error_detail}")
+                    exc = SubscriptionServiceUnavailable()
+                    exc.status_code = resp.status_code
+                    exc.response = error_detail
+                    raise exc
                     
                 else:
                     # Other errors (e.g., 401, 403 from service itself) - retry once
@@ -927,26 +945,42 @@ async def analyze_qa(
         subscription_id = ''.join(random.choices(string.ascii_letters + string.digits, k=16))
 
     # 1. Verify Subscription with improved error handling
+    subscription_quota_exceeded = False
+    subscription_message = None
+    
     try:
         await verify_consumption(user_id, subscription_id, action="scan")
     except SubscriptionLimitExceeded as e:
-        # User has exceeded their quota
-        raise HTTPException(
-            status_code=403,
-            detail=str(e) or "Subscription limit exceeded. Please upgrade your plan."
-        )
+        # User has exceeded their quota - return 200 with specific status
+        subscription_quota_exceeded = True
+        subscription_message = str(e) or "Subscription limit exceeded. Please upgrade your plan."
+        logger.warning(f"Subscription quota exceeded for user {user_id}: {subscription_message}")
     except SubscriptionInvalid as e:
-        # Invalid subscription_id or not found
+        # Invalid subscription_id or not found - pass through subscription service response
+        status_code = getattr(e, 'status_code', 400)
+        response = getattr(e, 'response', {"detail": str(e) or "Invalid subscription"})
         raise HTTPException(
-            status_code=400,
-            detail=str(e) or "Invalid subscription. Please check your subscription details."
+            status_code=status_code,
+            detail=response.get('detail') if isinstance(response, dict) else response
         )
     except SubscriptionServiceUnavailable as e:
-        # Service is down or timing out
+        # Service is down or timing out - pass through subscription service response
+        status_code = getattr(e, 'status_code', 503)
+        response = getattr(e, 'response', {"detail": str(e) or "Subscription service unavailable"})
         raise HTTPException(
-            status_code=503,
-            detail=str(e) or "Subscription service is temporarily unavailable. Please try again in a moment."
+            status_code=status_code,
+            detail=response.get('detail') if isinstance(response, dict) else response
         )
+    
+    # If quota exceeded, return early with 200 OK but specific status
+    if subscription_quota_exceeded:
+        return {
+            "status": "quota_exceeded",
+            "message": subscription_message,
+            "upgrade_required": True,
+            "user_id": user_id,
+            "subscription_id": subscription_id
+        }
 
     # 2. Lookup Category & Crop Name
     stmt = select(MasterIcon).where(MasterIcon.category_id == category_id)
