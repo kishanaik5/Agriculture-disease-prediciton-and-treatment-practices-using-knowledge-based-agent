@@ -107,6 +107,10 @@
                 {
                     "name": "SUBSCRIPTION_BASE_URL",
                     "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-cv-dev/SUBSCRIPTION_BASE_URL"
+                },
+                {
+                    "name": "SUBSCRIPTION_API_KEY",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-cv-dev/SUBSCRIPTION_API_KEY"
                 }
             ],
             "systemControls": [],
