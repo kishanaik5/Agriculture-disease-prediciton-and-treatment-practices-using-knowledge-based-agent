@@ -85,15 +85,21 @@ async def wait_for_db(engine, max_retries: int = 10):
 
     for attempt in range(1, max_retries + 1):
         try:
-            # Skip table creation - tables should exist via migrations
-            # async with engine.begin() as conn:
-            #     await conn.run_sync(BaseSchema.metadata.create_all)
+            # Create schema if it doesn't exist, then create tables
+            async with engine.begin() as conn:
+                # Create schema first
+                await conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {settings.DB_SCHEMA}"))
+                print(f"✅ Schema '{settings.DB_SCHEMA}' ensured")
+                
+                # Now create all tables in the schema
+                await conn.run_sync(BaseSchema.metadata.create_all)
+                print(f"✅ Tables created in schema '{settings.DB_SCHEMA}'")
             
-            # Just verify connection
+            # Verify connection
             async with engine.connect() as conn:
                 await conn.execute(text("SELECT 1"))
             
-            print("✅ Database connection successful and tables verified.")
+            print(f"✅ Database connection successful and schema/tables verified.")
             db_ready = True
             return True
             
