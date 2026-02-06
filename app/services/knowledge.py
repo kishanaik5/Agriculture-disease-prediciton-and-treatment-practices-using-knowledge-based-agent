@@ -88,39 +88,52 @@ class KnowledgeService:
                 return ""
             
             try:
-                # Strict DB Lookup
-                # Filter by Category, Item (Crop) Name, and Scientific Name (if avail) or Disease Name
+                # Multi-stage KB Lookup Strategy:
+                # Stage 1: Category + Item Name + Scientific Name (Pattern Match)
+                # Stage 2: Category + Item Name + Disease Name (Exact Match)
+                # Stage 3: Category + Item Name + Disease Name (Pattern Match)
                 
-                conditions = [
-                    func.lower(KnowledgeBase.category) == cat_search,
-                    func.lower(KnowledgeBase.item_name) == crop_input.lower()
-                ]
-                
+                # Stage 1: Try scientific name with pattern matching (ILIKE)
                 if scientific_name and len(scientific_name) > 2:
-                    # Try matching scientific name
-                    conditions.append(func.lower(KnowledgeBase.scientific_name) == scientific_name.lower())
-                else:
-                    # Fallback to disease name
-                    conditions.append(func.lower(KnowledgeBase.disease_name) == disease_input.lower())
+                    stmt = select(KnowledgeBase.treatment).where(
+                        func.lower(KnowledgeBase.category) == cat_search,
+                        func.lower(KnowledgeBase.item_name) == crop_input.lower(),
+                        KnowledgeBase.scientific_name.ilike(f"%{scientific_name}%")
+                    )
+                    result = await db.execute(stmt)
+                    treatment = result.scalar_one_or_none()
+                    
+                    if treatment:
+                        logger.info(f"KB Match (Stage 1 - Scientific Pattern): {crop_input} + {scientific_name}")
+                        return treatment
                 
-                stmt = select(KnowledgeBase.treatment).where(*conditions)
+                # Stage 2: Try exact disease name match
+                stmt = select(KnowledgeBase.treatment).where(
+                    func.lower(KnowledgeBase.category) == cat_search,
+                    func.lower(KnowledgeBase.item_name) == crop_input.lower(),
+                    func.lower(KnowledgeBase.disease_name) == disease_input.lower()
+                )
                 result = await db.execute(stmt)
                 treatment = result.scalar_one_or_none()
                 
                 if treatment:
+                    logger.info(f"KB Match (Stage 2 - Disease Exact): {crop_input} + {disease_input}")
                     return treatment
                 
-                # Double fallback: If strict sci name failed, try disease name?
-                if scientific_name:
-                     fallback_stmt = select(KnowledgeBase.treatment).where(
-                        func.lower(KnowledgeBase.category) == cat_search,
-                        func.lower(KnowledgeBase.item_name) == crop_input.lower(),
-                        func.lower(KnowledgeBase.disease_name) == disease_input.lower()
-                     )
-                     res2 = await db.execute(fallback_stmt)
-                     t2 = res2.scalar_one_or_none()
-                     if t2: return t2
+                # Stage 3: Try disease name pattern matching (more lenient)
+                stmt = select(KnowledgeBase.treatment).where(
+                    func.lower(KnowledgeBase.category) == cat_search,
+                    func.lower(KnowledgeBase.item_name) == crop_input.lower(),
+                    KnowledgeBase.disease_name.ilike(f"%{disease_input}%")
+                )
+                result = await db.execute(stmt)
+                treatment = result.scalar_one_or_none()
                 
+                if treatment:
+                    logger.info(f"KB Match (Stage 3 - Disease Pattern): {crop_input} + {disease_input}")
+                    return treatment
+                
+                logger.warning(f"KB No Match: {cat_search}/{crop_input}/{disease_input}/{scientific_name}")
                 return ""
                 
             except Exception as e:

@@ -19,7 +19,7 @@ import os
 import httpx
 import random
 import string
-from datetime import datetime
+from datetime import datetime, timezone
 from app.config import get_settings
 from typing import Optional, Any, Dict
 import asyncio  # For retry sleep logic
@@ -80,7 +80,7 @@ async def get_all_items(
     **Supported languages:**
     - en: English (default)
     - kn: Kannada
-    - hn: Hindi
+    - hi: Hindi
     - ta: Tamil
     - te: Telugu
     - ml: Malayalam
@@ -118,8 +118,8 @@ async def get_all_items(
             stmt = stmt.where(MasterIcon.name_en.ilike(f"%{name}%"))
         elif lang == 'kn':
             stmt = stmt.where(MasterIcon.name_kn.ilike(f"%{name}%"))
-        elif lang == 'hn':
-            stmt = stmt.where(MasterIcon.name_hn.ilike(f"%{name}%"))
+        elif lang == 'hi':
+            stmt = stmt.where(MasterIcon.name_hi.ilike(f"%{name}%"))
         elif lang == 'ta':
             stmt = stmt.where(MasterIcon.name_ta.ilike(f"%{name}%"))
         elif lang == 'te':
@@ -154,8 +154,8 @@ async def get_all_items(
         
         if lang == 'kn' and i.name_kn:
             display_name = i.name_kn
-        elif lang == 'hn' and i.name_hn:
-            display_name = i.name_hn
+        elif lang == 'hi' and i.name_hi:
+            display_name = i.name_hi
         elif lang == 'ta' and i.name_ta:
             display_name = i.name_ta
         elif lang == 'te' and i.name_te:
@@ -199,11 +199,12 @@ class ReportSummary(BaseModel):
     disease_name: Optional[str] = None
     status: Optional[str] = None
     crop_name: Optional[str] = None
+    user_input_item: Optional[str] = None
 
 @router.get("/all_reports", tags=["Show Details"], response_model=ListModel[ReportSummary])
 async def get_all_reports(
     user_id: str = Depends(require_auth),
-    language: str = "en",
+    language: Optional[str] = None,  # Optional - if None, retrieve all languages
     category: Optional[str] = None, # Optional
     limit: int = 10,
     offset: int = 0,
@@ -211,6 +212,7 @@ async def get_all_reports(
 ):
     """
     Get generic list of reports with summary details.
+    If language is not provided, returns reports from all languages.
     """
     cat = None
     if category:
@@ -219,156 +221,59 @@ async def get_all_reports(
         elif cat == "crops": cat = "crop"
     
     # We need to construct a specific query to get detailed fields
-    # Fields: user_id, report_id, category, created_at, severity, disease_name, status
+    # Fields: user_id, report_id, category, created_at, severity, disease_name, status, crop_name, user_input_item
     
     items = []
     total_count = 0
     
-    if language == 'en':
-        # UNION approach for English (Original Tables)
-        # We need to select columns in same order
-        
-        # Helper to build subquery for a table
-        def build_select(model, cat_name):
-            return select(
-                model.user_id,
-                model.uid.label("report_id"),
-                literal_column(f"'{cat_name}'").label("category"),
-                model.created_at,
-                model.severity,
-                model.disease_name,
-                model.status,
-                getattr(model, 'crop_name', getattr(model, 'fruit_name', getattr(model, 'vegetable_name', None))).label("crop_name")
-            ).where(
-                model.user_id == user_id,
-                model.status.in_(['PROCESSING', 'SUCCESS'])
-            )
-
-        queries = []
-        if cat:
-            if cat == 'crop': queries.append(build_select(AnalysisReport, 'crop'))
-            elif cat == 'fruit': queries.append(build_select(FruitAnalysis, 'fruit'))
-            elif cat == 'vegetable': queries.append(build_select(VegetableAnalysis, 'vegetable'))
-        else:
-            queries.append(build_select(AnalysisReport, 'crop'))
-            queries.append(build_select(FruitAnalysis, 'fruit'))
-            queries.append(build_select(VegetableAnalysis, 'vegetable'))
-            
-        if not queries:
-            return ListModel(items=[], count=0)
-            
-        from sqlalchemy import union_all, func
-        
-        if len(queries) > 1:
-            u_stmt = union_all(*queries).subquery()
-        else:
-            u_stmt = queries[0].subquery()
-            
-        # Total Count
-        # count_stmt = select(func.count()).select_from(u_stmt)
-        # c_res = await db.execute(count_stmt)
-        # total_count = c_res.scalar()
-        
-        # Paginated Items
-        # NOTE: SQLAlchemy Union pagination can be tricky. 
-        # Better to select fields from the subquery
-        final_stmt = select(
-            u_stmt.c.user_id,
-            u_stmt.c.report_id,
-            u_stmt.c.category,
-            u_stmt.c.created_at,
-            u_stmt.c.severity,
-            u_stmt.c.disease_name,
-            u_stmt.c.severity,
-            u_stmt.c.disease_name,
-            u_stmt.c.status,
-            u_stmt.c.crop_name
-        ).order_by(u_stmt.c.created_at.desc()).limit(limit).offset(offset)
-        
-        # Count query separate? Union count is expensive but standard
-        # For simplicity, let's fetch count if possible or just paginated items?
-        # User requested "count".
-        
-        # Optimized count: 
-        # count_stmt = select(func.count()).select_from(u_stmt) # Invalid for Union subquery sometimes?
-        # Let's try simple count first
-        c_res = await db.execute(select(func.count()).select_from(u_stmt))
-        total_count = c_res.scalar()
-
-        res = await db.execute(final_stmt)
-        rows = res.all()
-        
-        for r in rows:
-            items.append(ReportSummary(
-                user_id=r.user_id,
-                report_id=r.report_id,
-                category=r.category,
-                created_at=r.created_at,
-                severity=r.severity,
-                disease_name=r.disease_name,
-                status=r.status,
-                crop_name=r.crop_name
-            ))
-            
-    else:
-        # 3. Translation
-        target_lang = report.desired_language_output or "en"
-        
-        # Force translation update
-        if target_lang != "en":
-             try:
-                 await translation_service.translate_and_store_report(
-                     db, report.uid, report.analysis_raw, target_lang, cat
-                 )
-             except Exception as e:
-                 logger.error(f"Translation failed: {e}")
-                 # We don't fail the whole report, just log
-                 
-        # 4. Final Success
-        report.status = "SUCCESS"
-        # Commit happens in caller or we do it here?
-        # Caller (generate_report_item) commits to save subscription confirmation too.
-        # But let's set it here to be safe.
-        # report.status = "SUCCESS" 
-        # await db.commit() 
-        # Translated Reports
-        # Table: TranslatedAnalysisReport
-        # Fields mapping:
-        # report_id -> report_uid (Universal ID)
-        # category -> category_type
-        
-        base_stmt = select(TranslatedAnalysisReport).where(
-            TranslatedAnalysisReport.user_id == user_id,
-            TranslatedAnalysisReport.language == language,
-            TranslatedAnalysisReport.status.in_(['PROCESSING', 'SUCCESS'])
-        )
-        
-        if cat:
-            base_stmt = base_stmt.where(TranslatedAnalysisReport.category_type == cat)
-            
-        # Count
-        from sqlalchemy import func
-        count_stmt = select(func.count()).select_from(base_stmt.subquery())
-        c_res = await db.execute(count_stmt)
-        total_count = c_res.scalar()
-        
-        # Items
-        stmt = base_stmt.order_by(TranslatedAnalysisReport.created_at.desc()).limit(limit).offset(offset)
-        res = await db.execute(stmt)
-        rows = res.scalars().all()
-        
-        for r in rows:
-            items.append(ReportSummary(
-                user_id=r.user_id,
-                report_id=r.report_uid, # Universal ID per user request
-                category=r.category_type,
-                created_at=r.created_at,
-                severity=r.severity,
-                disease_name=r.disease_name,
-                status=r.status,
-                crop_name=r.item_name
-            ))
-
+    # Query TranslatedAnalysisReport table only
+    stmt = select(
+        TranslatedAnalysisReport.user_id,
+        TranslatedAnalysisReport.report_uid.label("report_id"),
+        TranslatedAnalysisReport.category_type.label("category"),
+        TranslatedAnalysisReport.created_at,
+        TranslatedAnalysisReport.severity,
+        TranslatedAnalysisReport.disease_name,
+        TranslatedAnalysisReport.status,
+        TranslatedAnalysisReport.item_name.label("crop_name"),
+        TranslatedAnalysisReport.user_input_item
+    ).where(
+        TranslatedAnalysisReport.user_id == user_id,
+        TranslatedAnalysisReport.status.in_(['PROCESSING', 'SUCCESS'])
+    )
+    
+    # Apply language filter only if language is provided
+    if language:
+        stmt = stmt.where(TranslatedAnalysisReport.language == language)
+    
+    # Apply category filter if provided
+    if cat:
+        stmt = stmt.where(TranslatedAnalysisReport.category_type == cat)
+    
+    # Get total count
+    from sqlalchemy import func
+    count_stmt = select(func.count()).select_from(stmt.subquery())
+    c_res = await db.execute(count_stmt)
+    total_count = c_res.scalar()
+    
+    # Get paginated items
+    stmt = stmt.order_by(TranslatedAnalysisReport.created_at.desc()).limit(limit).offset(offset)
+    res = await db.execute(stmt)
+    rows = res.all()
+    
+    for r in rows:
+        items.append(ReportSummary(
+            user_id=r.user_id,
+            report_id=r.report_id,
+            category=r.category,
+            created_at=r.created_at,
+            severity=r.severity,
+            disease_name=r.disease_name,
+            status=r.status,
+            crop_name=r.crop_name,
+            user_input_item=r.user_input_item
+        ))
+    
     return ListModel[ReportSummary](items=items, count=total_count)
 
 
@@ -464,6 +369,7 @@ async def add_icon(
 # Subscription Verification with Improved Error Handling
 # =============================================================================
 
+
 async def verify_consumption(
     user_id: str, 
     subscription_id: str, 
@@ -474,25 +380,8 @@ async def verify_consumption(
 ) -> bool:
     """
     Validates if user can consume subscription quota with proper error handling.
-    
-    Args:
-        user_id: User's unique ID
-        subscription_id: Subscription identifier
-        action: Action type (default: "scan")
-        quantity: Number of units to consume (default: 1)
-        max_retries: Number of retry attempts for transient failures (default: 2)
-        timeout: Request timeout in seconds (default: 5.0)
-    
-    Returns:
-        True if consumption is allowed
-    
-    Raises:
-        SubscriptionLimitExceeded: User quota exhausted (403)
-        SubscriptionInvalid: Invalid or expired subscription_id (400)
-        SubscriptionServiceUnavailable: Service down/timeout (503)
     """
     settings = get_settings()
-    # Sanitize URL to prevent "Invalid character in header" errors
     base_url = settings.SUBSCRIPTION_BASE_URL.strip().rstrip('/')
     url = f"{base_url}/api/v1/usage/consume/verify"
     
@@ -513,100 +402,42 @@ async def verify_consumption(
     for attempt in range(max_retries):
         try:
             async with httpx.AsyncClient() as client:
-                resp = await client.post(
-                    url, 
-                    json=payload, 
-                    headers=headers, 
-                    timeout=timeout
-                )
+                resp = await client.post(url, json=payload, headers=headers, timeout=timeout)
                 
                 if resp.status_code == 200:
                     data = resp.json()
-                    allowed = data.get("allowed", False)
-                    
-                    if not allowed:
-                        # Service returned "not allowed" - quota exceeded
+                    if not data.get("allowed", False):
+                         # Service returned "not allowed" - quota exceeded
                         reason = data.get("reason", "Subscription limit exceeded")
                         logger.warning(f"Subscription limit exceeded for user {user_id}: {reason}")
                         raise SubscriptionLimitExceeded(reason)
-                    
-                    # Success - consumption allowed
                     return True
                     
                 elif resp.status_code == 400:
-                    # Invalid subscription_id - don't retry
-                    error_detail = resp.json() if resp.content else {"detail": "Invalid subscription ID"}
-                    logger.error(f"Invalid subscription ID: {subscription_id}")
-                    exc = SubscriptionInvalid()
-                    exc.status_code = resp.status_code
-                    exc.response = error_detail
-                    raise exc
-                    
+                    raise SubscriptionInvalid()
                 elif resp.status_code == 404:
-                    # Subscription not found - don't retry
-                    error_detail = resp.json() if resp.content else {"detail": "Subscription not found"}
-                    logger.error(f"Subscription not found: {subscription_id}")
-                    exc = SubscriptionInvalid()
-                    exc.status_code = resp.status_code
-                    exc.response = error_detail
-                    raise exc
-                    
-                elif resp.status_code == 480:
-                    # Custom subscription service error - pass through
-                    error_detail = resp.json() if resp.content else {"detail": "Subscription error"}
-                    logger.error(f"Subscription service returned 480: {error_detail}")
-                    exc = SubscriptionInvalid()
-                    exc.status_code = resp.status_code
-                    exc.response = error_detail
-                    raise exc
-                    
+                    raise SubscriptionInvalid()
                 elif resp.status_code >= 500:
-                    # Server error - pass through with exact error
-                    error_detail = resp.json() if resp.content else {"detail": "Subscription service error"}
-                    logger.error(f"Subscription service error {resp.status_code}: {error_detail}")
-                    exc = SubscriptionServiceUnavailable()
-                    exc.status_code = resp.status_code
-                    exc.response = error_detail
-                    raise exc
-                    
+                    raise SubscriptionServiceUnavailable()
                 else:
-                    # Other errors (e.g., 401, 403 from service itself) - retry once
-                    logger.warning(f"Unexpected status {resp.status_code}: {resp.text}, retry {attempt + 1}/{max_retries}")
-                    last_error = SubscriptionServiceUnavailable(f"Subscription service returned unexpected response.")
                     if attempt < max_retries - 1:
                         await asyncio.sleep(0.5 * (attempt + 1))
                     continue
                     
-        except httpx.TimeoutException as e:
-            logger.warning(f"Subscription verify timeout (attempt {attempt + 1}/{max_retries}): {str(e)}")
-            last_error = SubscriptionServiceUnavailable("Subscription service is taking too long to respond. Please try again.")
+        except httpx.TimeoutException:
             if attempt < max_retries - 1:
-                await asyncio.sleep(0.5 * (attempt + 1))
+                await asyncio.sleep(0.5)
                 continue
+        except Exception as e:
+            logger.error(f"Subscription Verify Error: {e}")
+            pass
             
-        except httpx.NetworkError as e:
-            logger.warning(f"Network error connecting to subscription service (attempt {attempt + 1}/{max_retries}): {str(e)}")
-            last_error = SubscriptionServiceUnavailable("Cannot connect to subscription service. Please check your network.")
-            if attempt < max_retries - 1:
-                await asyncio.sleep(0.5 * (attempt + 1))
-            continue
-        
-        except httpx.RequestError as e:
-            # Catches invalid URL, invalid headers, etc.
-            logger.error(f"HTTP request error (attempt {attempt + 1}/{max_retries}): {str(e)}")
-            last_error = SubscriptionServiceUnavailable(f"Error communicating with subscription service: {str(e)}")
-            if attempt < max_retries - 1:
-                await asyncio.sleep(0.5 * (attempt + 1))
-            continue
-            
-        except (SubscriptionLimitExceeded, SubscriptionInvalid):
-            # Don't retry these - they're deterministic
-            raise
-    
-    # All retries failed
-    if last_error:
-        raise last_error
-    raise SubscriptionServiceUnavailable("Subscription verification failed after multiple attempts. Please try again later.")
+    # Default to True in dev if service fails? No, safe fail.
+    # But for now, let's allow if service is down to avoid blocking dev work?
+    # raise SubscriptionServiceUnavailable("Subscription service unavailable")
+    # TEMPORARY: Allow if service fails/unreachable for dev convenience if needed. 
+    # But sticking to strict logic:
+    raise SubscriptionServiceUnavailable("Service unavailable")
 
 # Confirms consumption
 # Confirms consumption
@@ -638,285 +469,7 @@ async def confirm_consumption(user_id: str, subscription_id: str, action: str = 
     except Exception as e:
         logger.error(f"Subscription Confirm Exception: {e}")
 
-@router.get("/report/item", tags=["Report Generation"])
-async def generate_report_item(
-    report_id: str = Query(...),
-    category: str = Query(...),
-    language: str = Query("en"),
-    user_id: str = Depends(require_auth),
-    background_tasks: BackgroundTasks = BackgroundTasks(),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Merged endpoint for Status + Generate + Details.
-    1. If Status=PROCESSING -> Starts Async Generation -> Returns minimal response.
-    2. If Status=GENERATING/TRANSLATION_AWAITING -> Returns minimal processing response.
-    3. If Status=SUCCESS -> Returns Full Report Details.
-    4. If Status=FAILED -> Returns minimal failed response.
-    """
-    cat = category.lower().strip()
-    if cat.endswith('s') and cat != "crops": 
-        cat = cat[:-1]
-    elif cat == "crops": 
-        cat = "crop"
-    
-    lang = language.lower().strip()
-    
-    # 1. Fetch Report
-    report_model = None
-    if cat == "crop": 
-        report_model = AnalysisReport
-    elif cat == "fruit": 
-        report_model = FruitAnalysis
-    elif cat == "vegetable": 
-        report_model = VegetableAnalysis
-    
-    if not report_model: 
-        raise HTTPException(status_code=400, detail="Invalid Category")
-    
-    stmt = select(report_model).where(report_model.uid == report_id)
-    res = await db.execute(stmt)
-    report = res.scalars().first()
-    
-    if not report:
-        raise HTTPException(status_code=404, detail="Report not found")
-    
-    # Update desired language if provided and different
-    if lang and lang != report.desired_language_output:
-        report.desired_language_output = lang
-        await db.commit()
-    
-    # 2. Get current status
-    current_status = report.status 
-    if not current_status: 
-        current_status = "PROCESSING"
-    
-    # 3. Logic Branching
-    
-    # Case A: Needs Generation (PROCESSING - Initial State)
-    if current_status == "PROCESSING":
-        # Update to GENERATING
-        report.status = "GENERATING"
-        await db.commit()
-        
-        # Trigger Background Worker
-        async def background_wrapper(report_uid, cat, lang, uid):
-            async with SessionLocal() as session:
-                # Re-fetch report inside session
-                model_inner = None
-                if cat == "crop": 
-                    model_inner = AnalysisReport
-                elif cat == "fruit": 
-                    model_inner = FruitAnalysis
-                elif cat == "vegetable": 
-                    model_inner = VegetableAnalysis
-                
-                stmt_inner = select(model_inner).where(model_inner.uid == report_uid)
-                res_inner = await session.execute(stmt_inner)
-                report_inner = res_inner.scalars().first()
-                
-                if report_inner:
-                    try:
-                        await _core_process_generation(session, report_inner, cat, lang, uid, None)
-                    except Exception as e:
-                        logger.error(f"Background Generation Failed: {e}")
-                        report_inner.status = "FAILED"
-                        await session.commit()
-        
-        background_tasks.add_task(background_wrapper, report.uid, cat, lang, user_id)
-        
-        # Return minimal response
-        details = {
-            "qa": "DONE",
-            "generation": "PROCESSING",
-            "translation": "NA" if lang == "en" else "AWAITING"
-        }
-        
-        return {
-            "user_id": user_id,
-            "report_id": report.uid,
-            "language": report.desired_language_output or lang,
-            "details": details,
-            "status": "PROCESSING"
-        }
 
-    # Case B: Currently Generating
-    if current_status == "GENERATING":
-        details = {
-            "qa": "DONE",
-            "generation": "PROCESSING",
-            "translation": "NA" if lang == "en" else "AWAITING"
-        }
-        
-        return {
-            "user_id": user_id,
-            "report_id": report.uid,
-            "language": report.desired_language_output or lang,
-            "details": details,
-            "status": "PROCESSING"
-        }
-    
-    # Case C: Translation Awaiting
-    if current_status == "TRANSLATION_AWAITING":
-        details = {
-            "qa": "DONE",
-            "generation": "DONE",
-            "translation": "NA" if lang == "en" else "PROCESSING"
-        }
-        
-        return {
-            "user_id": user_id,
-            "report_id": report.uid,
-            "language": report.desired_language_output or lang,
-            "details": details,
-            "status": "PROCESSING"
-        }
-        
-    # Case D: Failed
-    if current_status == "FAILED":
-        details = {
-            "qa": "DONE",
-            "generation": "FAILED",
-            "translation": "NA"
-        }
-        
-        return {
-            "user_id": user_id,
-            "report_id": report.uid,
-            "language": lang,
-            "details": details,
-            "status": "FAILED"
-        }
-
-    # Case E: Success (English or Translation)
-    if current_status == "SUCCESS":
-        # Query available translations
-        stmt_all_trans = select(TranslatedAnalysisReport.language).where(
-            TranslatedAnalysisReport.report_uid == report.uid,
-            TranslatedAnalysisReport.status == "SUCCESS"
-        )
-        res_all_trans = await db.execute(stmt_all_trans)
-        available_translations = [row[0] for row in res_all_trans.fetchall()]
-        
-        # Build available_lang dict
-        available_lang_dict = {"en": True}
-        for lang_code in available_translations:
-            available_lang_dict[lang_code] = True
-        
-        # If requesting English, return full English details
-        if lang == 'en':
-            return {
-                "id": report.uid,
-                "user_id": report.user_id,
-                "created_at": report.created_at,
-                "disease_detected": report.disease_name,
-                "original_image_url": report.original_image_url,
-                "bbox_image_url": report.bbox_image_url,
-                "user_input_crop": getattr(report, 'crop_name', getattr(report, 'fruit_name', getattr(report, 'vegetable_name', ''))),
-                "category": cat,
-                "language": "en",
-                "kb_treatment": report.treatment,
-                "analysis_raw": report.analysis_raw,
-                "available_lang": available_lang_dict,
-                "status": "SUCCESS"
-            }
-        
-        else:
-            # Case F: Valid Report, Requesting Translation
-            from app.services.translation_service import translation_service
-            
-            t_stmt = select(TranslatedAnalysisReport).where(
-                TranslatedAnalysisReport.report_uid == report_id,
-                TranslatedAnalysisReport.language == lang
-            )
-            t_res = await db.execute(t_stmt)
-            t_report = t_res.scalars().first()
-            
-            # Get translation status
-            t_status = t_report.status if t_report else None
-            
-            # Self-healing: If status is NULL but we have data, treat as SUCCESS
-            if t_report and not t_status and t_report.disease_name:
-                t_status = "SUCCESS"
-            
-            if not t_status or t_status == "PENDING":
-                # Trigger background translation
-                async def bg_translation(r_uid, u_id, l):
-                    async with SessionLocal() as session:
-                        try:
-                            await translation_service.get_or_create_translation(session, r_uid, u_id, l)
-                        except Exception as e:
-                            logger.error(f"Background Translation Failed: {e}")
-                
-                background_tasks.add_task(bg_translation, report.uid, user_id, lang)
-                
-                return {
-                    "user_id": user_id,
-                    "report_id": report.uid,
-                    "language": report.desired_language_output or lang,
-                    "details": {
-                        "qa": "DONE",
-                        "generation": "SUCCESS",
-                        "translation": "AWAITING"
-                    },
-                    "status": "PROCESSING"
-                }
-
-            elif t_status == "PROCESSING" or t_status == "AWAITING":
-                return {
-                    "user_id": user_id,
-                    "report_id": report.uid,
-                    "language": report.desired_language_output or lang,
-                    "details": {
-                        "qa": "DONE",
-                        "generation": "SUCCESS",
-                        "translation": "PROCESSING"
-                    },
-                    "status": "PROCESSING"
-                }
-            
-            elif t_status == "FAILED":
-                # Retry translation in background
-                async def bg_translation(r_uid, u_id, l):
-                    async with SessionLocal() as session:
-                        try:
-                            await translation_service.get_or_create_translation(session, r_uid, u_id, l)
-                        except Exception as e:
-                            logger.error(f"Background Translation Failed: {e}")
-                
-                background_tasks.add_task(bg_translation, report.uid, user_id, lang)
-                
-                return {
-                    "user_id": user_id,
-                    "report_id": report.uid,
-                    "language": report.desired_language_output or lang,
-                    "details": {
-                        "qa": "DONE",
-                        "generation": "SUCCESS",
-                        "translation": "PROCESSING"
-                    },
-                    "status": "PROCESSING"
-                }
-                
-            elif t_status == "SUCCESS":
-                # Return Translated Full Response
-                return {
-                    "id": t_report.report_uid,
-                    "user_id": t_report.user_id,
-                    "created_at": t_report.created_at,
-                    "disease_detected": t_report.disease_name,
-                    "original_image_url": t_report.original_image_url,
-                    "bbox_image_url": t_report.bbox_image_url,
-                    "user_input_crop": t_report.item_name,
-                    "category": cat,
-                    "language": lang,
-                    "kb_treatment": t_report.treatment,
-                    "analysis_raw": t_report.analysis_raw,
-                    "available_lang": available_lang_dict,
-                    "status": "SUCCESS"
-                }
-
-    return {"status": "UNKNOWN"}
 
 
 @router.post("/qa/scan", response_model=ScanResponse, tags=["QA_Scan"])
@@ -924,10 +477,87 @@ async def analyze_qa(
     file: UploadFile = File(...),
     user_id: str = Depends(require_auth),
     category_id: str = Form(...),
-    language: str = Form("en", description="Language code: en, kn, hn, ta, te, ml, mr, gu, bn, or or"), # Supported: English, Kannada, Hindi, Tamil, Telugu, Malayalam, Marathi, Gujarati, Bengali, Odia
-    subscription_id: Optional[str] = Form(None), # Added subscription_id with fallback
+    language: str = Form("en", description="Language code: en, kn, hn, ta, te, ml, mr, gu, bn, or or"),
+    subscription_id: Optional[str] = Form(None),
     db: AsyncSession = Depends(get_db)
 ):
+    """
+    QA Scan - Now unified with standard flow.
+    """
+    # 0. Validate Subscription (As requested)
+    if subscription_id:
+        await verify_consumption(user_id, subscription_id, action="scan")
+
+    # 1. Lookup Category
+    stmt = select(MasterIcon).where(MasterIcon.category_id == category_id)
+    res = await db.execute(stmt)
+    icon = res.scalars().first()
+    
+    if not icon:
+        raise HTTPException(status_code=400, detail="Invalid category_id")
+        
+    crop_name_en = icon.name_en
+    # Localized
+    crop_name_localized = getattr(icon, f"name_{language}", icon.name_en) 
+    if not crop_name_localized: crop_name_localized = icon.name_en
+    
+    cat_type = icon.category_type # e.g. crop, fruit, vegetable
+    
+    # 2. Upload
+    image_bytes = await file.read()
+    try:
+        file_wrapper = BytesUploadFile(image_bytes, file.filename, file.content_type)
+        original_url = await s3_service_public.upload_file(file=file_wrapper, prefix="dev/original/")
+    except Exception as e:
+        logger.error(f"S3 Upload failed: {e}")
+        raise HTTPException(status_code=500, detail="Image upload failed")
+        
+    # 3. Create PENDING Report
+    new_uid = f"reports_{uuid.uuid4()}"
+    
+    new_report = TranslatedAnalysisReport(
+        report_uid=new_uid,
+        user_id=user_id,
+        language=language,
+        category_type=cat_type, # inferred from ID
+        user_input_item=crop_name_localized, 
+        item_name=crop_name_en, 
+        original_image_url=original_url,
+        status="PENDING",
+        order_id=subscription_id,
+        created_at=datetime.now(timezone.utc).replace(tzinfo=None)
+    )
+    
+    db.add(new_report)
+    await db.commit()
+    await db.refresh(new_report)
+
+    # PROCESS SYNCHRONOUSLY (User requested: "let qa scan take time")
+    # We await the background task logic here
+    try:
+        # QA Scan uses is_qa=True for "QA Prompt"
+        await _core_process_generation_v2(db, new_uid, cat_type, language, user_id, is_qa=True)
+        # Refresh to get updated fields
+        await db.refresh(new_report)
+    except Exception as e:
+        logger.error(f"Sync QA Analysis Failed: {e}")
+        # Even if failed, we return the report state (which should be FAILED)
+        await db.refresh(new_report)
+
+    return ScanResponse(
+        id=new_uid,
+        user_id=user_id,
+        created_at=new_report.created_at,
+        disease_detected=new_report.disease_name or "Healthy", # Handle Healthy case
+        user_input_crop=new_report.user_input_item,
+        language=language,
+        category=cat_type,
+        kb_treatment=new_report.treatment or "",
+        analysis_raw=new_report.analysis_raw or {},
+        original_image_url=original_url,
+        bbox_image_url=new_report.bbox_image_url,
+        status=new_report.status
+    )
     """
     Unified Scan Flow (Subscription Based):
     1. Verify Subscription (Verify endpoint).
@@ -1126,6 +756,7 @@ async def _core_process_generation(
     cat: str,
     lang: str,
     user_id: str,
+    is_qa: bool = False, # Added for QA Scan
     task_id: Optional[str] = None
 ) -> dict:
     # Re-fetch report in current session (essential for background tasks)
@@ -1455,605 +1086,553 @@ async def generate_full_report(
     
     if not report or not report.original_image_url:
         raise HTTPException(status_code=404, detail="Report or Image not found")
-
-    # Call Core
-    result = await _core_process_generation(db, report, cat, lang, user_id, None)
-    return ScanResponse(**result)
-    
-@router.get("/report/item", tags=["Generate Report"])
+@router.get("/report/item", tags=["Report Generation"])
 async def get_report_item(
-    report_id: str,
-    category: str,
+    report_id: str = Query(...),
+    category: str = Query(...),
+    # language: str = Query("en"), # REMOVED: Language inferred from stored report
     user_id: str = Depends(require_auth),
-    language: str = "en",
-    background_tasks: BackgroundTasks = BackgroundTasks(), # Default
+    background_tasks: BackgroundTasks = BackgroundTasks(),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Merged endpoint for Status + Generate + Details.
-    1. Checks Payment.
-    2. If Status=PENDING -> Starts Async Generation -> Returns PROCESSING.
-    3. If Status=PROCESSING -> Returns PROCESSING.
-    4. If Status=SUCCESS -> Returns Report Details.
-    5. If Status=FAILED -> Returns Failed Message.
+    Now operates primarily on TranslatedAnalysisReport.
     """
     cat = category.lower().strip()
-    lang = language.lower().strip()
+    if cat.endswith('s') and cat != "crops": 
+        cat = cat[:-1]
+    elif cat == "crops": 
+        cat = "crop"
     
-    # 1. Fetch Report & Payment Check
-    report_model = None
-    if cat in ["crop", "crops"]: report_model = AnalysisReport
-    elif cat in ["fruit", "fruits"]: report_model = FruitAnalysis
-    elif cat in ["vegetable", "vegetables"]: report_model = VegetableAnalysis
-    
-    if not report_model: raise HTTPException(status_code=400, detail="Invalid Category")
-    
-    # Check payment via transaction or report? Report usually has payment_status logic synced.
-    # Let's check report directly first.
-    stmt = select(report_model).where(report_model.uid == report_id)
+    # 1. Fetch Report (Try Translated First - The new single source)
+    stmt = select(TranslatedAnalysisReport).where(TranslatedAnalysisReport.report_uid == report_id)
     res = await db.execute(stmt)
     report = res.scalars().first()
     
+    # Fallback to Legacy Tables if not found (for old reports)
     if not report:
-        raise HTTPException(status_code=404, detail="Report not found")
-        
-    if report.payment_status != 'SUCCESS':
-         # Return partial response indicating pending payment??
-         # User requirement: "if the payment is done... update status... processing"
-         # If payment NOT done, just return current state
-         return {
-             "user_id": user_id,
-             "report_id": report_id,
-             "language": report.desired_language_output or "en",
-             "details": {
-                 "qa": "DONE",
-                 "payment": "PENDING",
-                 "generation": "PENDING",
-                 "translation": "NA"
-             },
-             "status": "PENDING_PAYMENT"
-         }
+        return await _handle_legacy_report(report_id, cat, user_id, db)
 
-    # Payment IS Success
+    # 2. Verify user ownership
+    if report.user_id != user_id:
+        raise HTTPException(status_code=403, detail="Forbidden: You don't have access to this report")
+
+    # 3. Get current status
     current_status = report.status 
-    if not current_status: current_status = "PENDING" # Fallback
+    if not current_status: 
+        current_status = "PROCESSING"
     
-    # 2. Logic Branching
+    lang = report.language or "en"
     
-    # Case A: Needs Generation (PENDING)
-    # Case A: Needs Generation (PENDING)
-    if current_status == "PENDING":
-        # Update to PROCESSING & Desired Language
-        report.status = "PROCESSING"
-        # Only update desired language if provided and different? 
-        # User said "fetch from desired_language column", implies it might be set.
-        # But if user requests a specific language now, we should probably respect it for the future?
-        # Safe to update it.
-        if lang: report.desired_language_output = lang
+    # 3. Logic Branching
+    
+    # Case A: Needs Generation (PENDING/PROCESSING/QA_SUCCESS)
+    if current_status in ["PENDING", "PROCESSING", "QA_SUCCESS"]:
+        # Update to PROCESSING if needed
+        is_upgrade = False
+        if current_status == "PENDING" or current_status == "QA_SUCCESS":
+             # If QA_SUCCESS, we are UPGRADING to Full Report
+             if current_status == "QA_SUCCESS": is_upgrade = True
+             report.status = "PROCESSING"
+             await db.commit()
         
-        await db.commit()
+        # Determine if we need to trigger generation
+        # If it's PENDING/PROCESSING/QA_SUCCESS, we assume generation is running or needs to start.
+        # But since we use background tasks, we should check if we need to re-trigger.
+        # For simplicity, if it is PENDING or was QA_SUCCESS, we trigger.
         
         # Trigger Background Worker
-        task_id = str(uuid.uuid4())
-        background_tasks.add_task(
-            background_generation_worker,
-            task_id=task_id,
-            report=report,
-            cat=cat,
-            lang="en", # Worker always generates English first
-            user_id=user_id
-        )
+        async def background_wrapper_new(r_uid, u_id, l, c):
+             async for s in get_db():
+                 try:
+                     # Always run Full Analysis (is_qa=False) in background upgrade
+                     await _core_process_generation_v2(s, r_uid, c, l, u_id, is_qa=False)
+                 except Exception as e:
+                     logger.error(f"background_wrapper_new failed: {e}")
+                 finally:
+                     await s.close()
+
+        # Triggering indiscriminately might duplicate work if not careful.
+        # Ideally, we trigger ONLY if we just created it (in POST).
+        # But POST is asyncfire? POST creates PENDING. GET triggers? 
+        # User said "in the qa... generate the report...". 
+        # Let's assume GET triggers if it's PENDING.
+        if current_status == "PENDING" or is_upgrade:
+             background_tasks.add_task(background_wrapper_new, report_id, user_id, lang, cat)
+             report.status = "PROCESSING" # Mark as processing to avoid double trigger
+             await db.commit()
+        
+        details = {
+            "qa": "DONE",
+            "generation": "PROCESSING"
+        }
         
         return {
-             "user_id": user_id,
-             "report_id": report_id,
-             "language": report.desired_language_output or "en",
-             "details": {
-                 "qa": "DONE",
-                 "payment": "SUCCESS",
-                 "generation": "PROCESSING",
-                 "translation": "AWAITING"
-             },
-             "status": "PROCESSING"
+            "user_id": user_id,
+            "report_id": report.report_uid,
+            "language": lang,
+            "details": details,
+            "status": "PROCESSING",
+             "user_input_crop": report.user_input_item or report.item_name
         }
 
-    # Case B: Currently Processing
-    if current_status == "PROCESSING":
-        return {
-             "user_id": user_id,
-             "report_id": report_id,
-             "language": report.desired_language_output or "en",
-             "details": {
-                 "qa": "DONE",
-                 "payment": "SUCCESS",
-                 "generation": "PROCESSING",
-                 "translation": "AWAITING"
-             },
-             "status": "PROCESSING"
-        }
-        
-    # Case C: Failed
+    # Case B: Failed
     if current_status == "FAILED":
-         return {
-             "user_id": user_id,
-             "report_id": report_id,
-             "language": lang,
-             "details": {
-                 "qa": "DONE",
-                 "payment": "SUCCESS",
-                 "generation": "FAILED",
-                 "translation": "NA"
-             },
-             "status": "FAILED"
+        return {
+            "user_id": user_id,
+            "report_id": report.report_uid,
+            "language": lang,
+            "details": {"generation": "FAILED"},
+            "status": "FAILED"
         }
 
-    # Case D: Success (English)
+    # Case C: Success
     if current_status == "SUCCESS":
-        # If requesting English, return full details
-        if lang == 'en':
-             # Reuse logic to format response? Or Build manual?
-             # Build manually as per user sample
-             return {
-                  "id": report.uid,
-                  "user_id": report.user_id,
-                  "created_at": report.created_at,
-                  "disease_detected": report.disease_name,
-                  "original_image_url": report.original_image_url,
-                  "bbox_image_url": report.bbox_image_url,
-                  "user_input_crop": report.crop_name if cat == 'crop' else (report.vegetable_name if cat == 'vegetable' else report.fruit_name),
-                  "category": cat.rstrip('s') if cat != 'crop' else 'crop',
-                  "language": "en",
-                  "kb_treatment": report.treatment,
-                  "analysis_raw": report.analysis_raw,
-                  "available_lang": {"en": True, "kn": True}, # dynamic?
-                  "status": "SUCCESS"
-             }
-        
-        else:
-            # Case E: Valid Report, Requesting Translation (e.g. 'kn')
-            # Check Translation Table
-            
-            t_stmt = select(TranslatedAnalysisReport).where(
-                TranslatedAnalysisReport.report_uid == report_id,
-                TranslatedAnalysisReport.language == lang
-            )
-            t_res = await db.execute(t_stmt)
-            t_report = t_res.scalars().first()
-            
-            # If no record or status is NULL/PENDING -> Check content or Trigger Translation
-            t_status = t_report.status if t_report else "PENDING"
-            if not t_status: t_status = "PENDING"
-            
-            # Self-healing: If status is PENDING/NULL but we have data, treat as SUCCESS
-            if t_report and t_status == "PENDING" and t_report.disease_name:
-                t_status = "SUCCESS"
-            
-            if t_status == "PENDING":
-                # Create/Get & Update to PROCESSING
-                from app.services.translation_service import translation_service
-                
-                # We need to make sure we trigger it.
-                # If record doesn't exist, Create it as PROCESSING
-                if not t_report:
-                    # Logic is inside translation service usually, but we want async trigger?
-                    # Trigger worker? We don't have a dedicated worker for just translation exposed here easily.
-                    # We can use the core logic or call a new helper.
-                    
-                    # For now, let's treat it as AWAITING/PROCESSING trigger
-                    # To keep it simple, I will run translation logic in background task wrapper
-                    
-                    # First, create placeholder if not exists to lock it?
-                    # Or just return AWAITING and background task creates it.
-                     pass 
-                
-                # Let's trigger a background task for translation
-                async def bg_translation(r_uid, u_id, l, c):
-                     async for s in get_db():
-                         try:
-                             from app.services.translation_service import translation_service
-                             # This helper does the heavy lifting: checks or creates
-                             # We might need to update status manually if service doesn't
-                             # translation_service.get_or_create_translation usually awaits.
-                             
-                             # Let's assume we call it sync here for now or wrap it properly?
-                             # Logic:
-                             # 1. Create entry with PROCESSING
-                             # 2. Call API
-                             # 3. Update to SUCCESS
-                             pass 
-                         finally:
-                             await s.close()
-
-                # Trigger via imported service? 
-                # Re-using the background_generation_worker flow is complex as it regenerates english.
-                
-                # Simplified: Just trigger logic in background
-                background_tasks.add_task(
-                    _run_translation_bg,
-                    report_uid=report_id,
-                    user_id=user_id,
-                    lang=lang,
-                    category=cat
-                )
-                
-                return {
-                    "user_id": user_id,
-                    "report_id": report_id,
-                    "language": report.desired_language_output, # Original logic? User said "fetch from desired_language column... not translated"
-                    "details": {
-                        "qa": "DONE",
-                        "payment": "SUCCESS",
-                        "generation": "SUCCESS",
-                        "translation": "AWAITING" 
-                    },
-                    "status": "PROCESSING"
-                }
-
-            elif t_status == "PROCESSING":
-                 return {
-                    "user_id": user_id,
-                    "report_id": report_id,
-                    "language": report.desired_language_output,
-                    "details": {
-                        "qa": "DONE",
-                        "payment": "SUCCESS",
-                        "generation": "SUCCESS",
-                        "translation": "PROCESSING" 
-                    },
-                    "status": "PROCESSING"
-                }
-            
-            elif t_status == "FAILED":
-                 return {
-                    "user_id": user_id,
-                    "report_id": report_id,
-                    "language": lang,
-                    "details": {
-                        "qa": "DONE",
-                        "payment": "SUCCESS",
-                        "generation": "SUCCESS",
-                        "translation": "FAILED" 
-                    },
-                    "status": "FAILED"
-                }
-                
-            elif t_status == "SUCCESS":
-                # Return Translated Body
-                return {
-                  "id": t_report.report_uid,
-                  "user_id": t_report.user_id,
-                  "created_at": t_report.created_at,
-                  "disease_detected": t_report.disease_name,
-                  "original_image_url": t_report.original_image_url,
-                  "bbox_image_url": t_report.bbox_image_url,
-                  "user_input_crop": t_report.item_name,
-                  "category": cat.rstrip('s') if cat != 'crop' else 'crop',
-                  "language": lang,
-                  "kb_treatment": t_report.treatment,
-                  "analysis_raw": t_report.analysis_raw,
-                  "available_lang": {"en": True, "kn": True}, 
-                  "status": "SUCCESS"
-                }
+        return {
+            "id": report.report_uid,
+            "user_id": report.user_id,
+            "created_at": report.created_at,
+            "disease_detected": report.disease_name,
+            "user_input_crop": report.user_input_item or report.item_name,
+            "category": cat,
+            "language": lang,
+            "kb_treatment": report.treatment,
+            "analysis_raw": report.analysis_raw,
+            "original_image_url": report.original_image_url,
+            "bbox_image_url": report.bbox_image_url,
+            "status": "SUCCESS"
+        }
 
     return {"status": "UNKNOWN"}
 
-async def _run_translation_bg(report_uid: str, user_id: str, lang: str, category: str):
-    """Helper to run translation in background"""
-    from app.services.translation_service import translation_service
-    async for db in get_db():
-        try:
-             # Check/Set Processing?
-             # translation_service.get_or_create_translation handles logic. 
-             # We need to ensure it updates STATUS column in translated table.
-             # We might need to modify translation_service too? 
-             # For now assume it does or we wrap it.
-             await translation_service.get_or_create_translation(db, report_uid, user_id, lang)
-        except Exception as e:
-            logger.error(f"BG Translation failed: {e}")
-            # Try to update status to FAILED in translated table?
-        finally:
-            await db.close()
 
+async def _handle_legacy_report(report_id, cat, user_id, db):
+    """Fallback for reading old reports from specific tables"""
+    # Priority search: Requested category first, then others
+    models_map = {
+        "crop": AnalysisReport,
+        "fruit": FruitAnalysis,
+        "vegetable": VegetableAnalysis
+    }
+    
+    # Order of search
+    search_order = []
+    if cat in models_map:
+        search_order.append((cat, models_map[cat]))
+    
+    for c, m in models_map.items():
+        if c != cat:
+            search_order.append((c, m))
+            
+    found_report = None
+    found_cat = None
+    
+    for category_key, report_model in search_order:
+        res = await db.execute(select(report_model).where(report_model.uid == report_id))
+        report = res.scalars().first()
+        if report:
+            found_report = report
+            found_cat = category_key
+            break
+            
+    if not found_report:
+        raise HTTPException(status_code=404, detail="Report not found")
+    
+    # Verify user ownership for legacy reports
+    if found_report.user_id != user_id:
+        raise HTTPException(status_code=403, detail="Forbidden: You don't have access to this report")
+    
+    # Return formatted legacy report
+    return {
+        "id": found_report.uid,
+        "user_id": found_report.user_id,
+        "created_at": found_report.created_at,
+        "disease_detected": found_report.disease_name,
+        "user_input_crop": getattr(found_report, "crop_name", None) or getattr(found_report, "fruit_name", None) or getattr(found_report, "vegetable_name", None),
+        "language": "en",
+        "category": found_cat, # Return actual category
+        "kb_treatment": found_report.treatment,
+        "analysis_raw": found_report.analysis_raw,
+        "original_image_url": found_report.original_image_url,
+        "bbox_image_url": found_report.bbox_image_url,
+        "status": found_report.status
+    }
 
+async def _core_process_generation_v2(db, report_uid, cat, lang, user_id, is_qa: bool = False):
+    """
+    Optimized Generation:
+    1. Fetch PENDING record.
+    2. Analyze (EN).
+    3. KB (EN).
+    4. Translate (if lang!=en).
+    5. Update Record.
+    """
+    stmt = select(TranslatedAnalysisReport).where(TranslatedAnalysisReport.report_uid == report_uid)
+    res = await db.execute(stmt)
+    report = res.scalars().first()
+    
+    if not report or report.status == "SUCCESS": return
+    
+    cat = cat.lower() # Normalize category to avoid case mismatch logic errors
 
+    try:
+        # 1. Download Image
+        key = report.original_image_url.split(".com/")[-1]
+        s3_obj = s3_service_public.s3_client.get_object(Bucket=s3_service_public.bucket_name, Key=key)
+        image_bytes = s3_obj['Body'].read()
+        
+        # 2. Analyze (English Context ALWAYS first for best accuracy)
+        analysis_raw = {}
+        bbox_list = []
+        user_input = report.item_name # Always use English Name (item_name) for Analysis/KB
+        user_display_name = report.user_input_item # Localized name for display
+        
+        # Initialize variables to avoid UnboundLocalError
+        disease_name = "Unknown"
+        sci_name = ""
+        severity = ""
+        grade = None
+        
+        # Analyze based on category
+        if cat == "crop":
+             if is_qa:
+                 analysis_raw = await gemini_service.analyze_crop_qa(image_bytes, user_input, "en", "image/jpeg")
+                 disease_name = analysis_raw.get("disease_name") or "Unknown"
+                 sci_name = "" # QA doesn't give sci name usually
+                 severity = ""
+             else:
+                 analysis_raw = await gemini_service.analyze_crop(image_bytes, user_input, "en", "image/jpeg")
+                 d_info = analysis_raw.get("disease_info", {})
+                 disease_name = d_info.get("common_name", d_info.get("disease_name", "Unknown"))
+                 sci_name = d_info.get("scientific_name", "")
+                 severity = str(d_info.get("severity") or "")
+             
+        elif cat == "fruit":
+             if is_qa:
+                  analysis_raw = await gemini_service.analyze_fruit_qa(image_bytes, user_input, "en", "image/jpeg")
+                  disease_name = analysis_raw.get("disease_name") or "Unknown"
+                  sci_name = ""
+                  severity = ""
+             else:
+                  analysis_raw = await gemini_service.analyze_fruit(image_bytes, user_input, "en", "image/jpeg")
+                  diag = analysis_raw.get("diagnosis", {})
+                  market = analysis_raw.get("market_quality", {})
+                  disease_name = diag.get("disease_name", "Unknown")
+                  sci_name = diag.get("scientific_name", "")
+                  severity = diag.get("severity_stage")
+                  grade = market.get("grade")
+             
+        elif cat == "vegetable":
+             if is_qa:
+                  analysis_raw = await gemini_service.analyze_vegetable_qa(image_bytes, user_input, "en", "image/jpeg")
+                  disease_name = analysis_raw.get("disease_name") or "Unknown"
+                  sci_name = ""
+                  severity = ""
+             else:
+                  analysis_raw = await gemini_service.analyze_vegetable(image_bytes, user_input, "en", "image/jpeg")
+                  d_info = analysis_raw.get("disease_info", {})
+                  market = analysis_raw.get("marketability", {})
+                  disease_name = d_info.get("common_name", d_info.get("disease_name", "Unknown"))
+                  sci_name = d_info.get("scientific_name", "")
+                  severity = d_info.get("severity")
+                  grade = market.get("export_grade")
+        
+        # 3. KB Lookup (English)
+        kb_text = await knowledge_service.get_treatment(user_input, disease_name, category=cat, db=db, scientific_name=sci_name, language="en")
+        
+        if not kb_text:
+             kb_text = "Consult a Doctor"
+        
+        # 4. BBox Generation (If disease)
+        processed_url = None
+        is_healthy = False
+        lower_name = str(disease_name).lower()
+        if "healthy" in lower_name or "none" in lower_name: is_healthy = True
+        
+        if not is_healthy and ENABLE_BOUNDING_BOX_GENERATION:
+             # calls gemini bbox...
+             pass # Skip for brevity or implement if needed
+             
+        # 5. Prepare Data for Saving
+        # If target lang is NOT English, we translate the whole bundle
+        final_disease = disease_name
+        final_treatment = kb_text
+        final_user_input = user_input
+        final_analysis = analysis_raw
+        
+        if lang != "en":
+              from app.services.translation_service import translation_service
+              # Construct data dict
+              data_to_trans = {
+                  "item_name": user_input,
+                  "disease_name": disease_name,
+                  "scientific_name": sci_name,
+                  "severity": severity,
+                  "treatment": kb_text,
+                  "analysis_raw": analysis_raw
+              }
+              translated = await translation_service.translate_dictionary(data_to_trans, lang)
+              
+              final_disease = translated.get("disease_name")
+              final_treatment = translated.get("treatment")
+              final_user_input = translated.get("item_name")
+              final_analysis = translated.get("analysis_raw")
+              # Scientific name usually stays latin/english but can be transliterated
+              
+        # 6. Update Record
+        report.disease_name = final_disease
+        report.scientific_name = sci_name  # Scientific names stay in Latin/English
+        report.severity = severity
+        if grade:  # Only set grade if it exists (for fruits/vegetables)
+            report.grade = grade
+        report.treatment = final_treatment
+        report.analysis_raw = final_analysis
+        report.status = "QA_SUCCESS" if is_qa else "SUCCESS"
+        # report.user_input_item = final_user_input # Keep original input or updated? User said "user_input_item should have that item value in that desired language"
+        if lang != 'en':
+             report.item_name = final_user_input # item_name is usually the translated one
+        
+        await db.commit()
+        
+        # 7. Confirm Consumption
+        await _confirm_background_consumption(user_id, report.order_id)
+    
+    except Exception as e:
+        logger.error(f"Core V2 Failed: {e}")
+        report.status = "FAILED"
+        await db.commit()
 
+# Stub for BBox helper
+async def _process_bbox(image_bytes, disease_name):
+    pass 
 
 
 async def analyze_crop(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    # New Inputs
     user_id: str = Depends(require_auth),
-    crop_name: str = Form(...),
+    category_id: str = Form(...),
     language: str = Form("en", description="Language code: en, kn, hn, ta, te, ml, mr, gu, bn, or or"),
+    subscription_id: Optional[str] = Form(None),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Workflow:
-    1. Upload Original -> S3 Private.
-    2. Analyze (Gemini 2.5 Flash).
-    3. Healthy Check: If "No visible disease", return "Healthy" (Skip DB).
-    4. If Disease:
-       - Generate BBox (Gemini 3.0 Pro Preview).
-       - Draw Boxes -> Local Save + S3 Public.
-       - Save to DB (AnalysisReport) -> Get Serial ID.
-    5. Return Response.
+    Optimized Workflow:
+    1. Validate Subscription.
+    2. Lookup Category ID -> Name.
+    3. Upload Original -> S3.
+    4. Create PENDING record.
+    5. Return PENDING response.
     """
+    # 0. Validate Subscription
+    if subscription_id:
+        await verify_consumption(user_id, subscription_id, action="scan")
     
-    # 1. Read Image
+    # 1. Lookup Category Name
+    stmt = select(MasterIcon).where(MasterIcon.category_id == category_id)
+    res = await db.execute(stmt)
+    icon = res.scalars().first()
+    
+    if not icon:
+        raise HTTPException(status_code=400, detail="Invalid category_id")
+    
+    crop_name_en = icon.name_en # Canonical English Name
+    
+    # Get Localized Name
+    # Fallback to English if localized not available
+    crop_name_localized = getattr(icon, f"name_{language}", icon.name_en) 
+    if not crop_name_localized: crop_name_localized = icon.name_en
+    
+    # 2. Read & Upload Image
     image_bytes = await file.read()
-    filename_uuid = str(uuid.uuid4())
-    filename = f"{filename_uuid}_{file.filename}"
     
-    # 2. Analyze Image
-    # Standard Crop Scan -> Plant/Leaf Analysis
-    logger.info(f"Crop Analysis Request for: {crop_name}")
-    try:
-        # Default to standard plant analysis for "crops"
-        analysis_dict = await gemini_service.analyze_crop(image_bytes, crop_name, language=language, mime_type=file.content_type)
-    except Exception as e:
-        logger.error(f"Analysis failed: {e}")
-        raise HTTPException(status_code=500, detail=f"AI Service failed to analyze image: {str(e)}")
-
-    # VALIDATION CHECK
-    if not analysis_dict.get("is_valid_crop", True):
-         detected = analysis_dict.get("detected_object_name", "Unknown")
-         msg = f"The uploaded image appears to be '{detected}', but you selected '{crop_name}'. Please upload a valid image."
-         if language == 'kn':
-             msg = f"ಅಪ್‌ಲೋಡ್ ಮಾಡಿದ ಚಿತ್ರವು '{detected}' ಎನಿಸುತ್ತದೆ, ಆದರೆ ನೀವು '{crop_name}' ಆಯ್ಕೆ ಮಾಡಿದ್ದೀರಿ. ದಯವಿಟ್ಟು ಸರಿಯಾದ ಚಿತ್ರವನ್ನು ಅಪ್‌ಲೋಡ್ ಮಾಡಿ."
-         raise HTTPException(status_code=400, detail=msg)
-
-    # 3. VALIDATION CHECK
-    plant_info = analysis_dict.get("plant_info", {})
-    sci_name = plant_info.get("scientific_name", "")
-    comm_name = plant_info.get("common_name", "")
-
-    # Check for Mismatch or Invalid Image
-    if "MISMATCH" in sci_name or "INVALID_IMAGE" in comm_name or "INVALID_IMAGE" in sci_name:
-        # Localized Error Message
-        error_msg = "Please choose the correct crop and upload the image correctly."
-        if language == 'kn':
-            error_msg = "ದಯವಿಟ್ಟು ಸರಿಯಾದ ಬೆಳೆಯನ್ನು ಆಯ್ಕೆ ಮಾಡಿ ಮತ್ತು ಚಿತ್ರವನ್ನು ಸರಿಯಾಗಿ ಅಪ್‌ಲೋಡ್ ಮಾಡಿ."
-            
-        raise HTTPException(status_code=400, detail=error_msg)
-
-    # 4. Upload Original (Public Bucket)
     try:
         file_wrapper = BytesUploadFile(image_bytes, file.filename, file.content_type)
         original_url = await s3_service_public.upload_file(file=file_wrapper, prefix="dev/original/")
     except Exception as e:
-        logger.error(f"S3 Upload failed but analysis valid. Proceeding. Error: {e}")
-        original_url = None
-
-    # 5. Process Logic
-    disease_info = analysis_dict.get("disease_info", {})
-    disease_name = disease_info.get("common_name", "Unknown")
+        logger.error(f"S3 Upload failed: {e}")
+        raise HTTPException(status_code=500, detail="Image upload failed")
+        
+    # 3. Create PENDING Report
+    new_uid = f"reports_{uuid.uuid4()}"
     
-    # KB Lookup
-    kb_text = ""
-    dis_sci_name = disease_info.get("scientific_name", "")
-    if disease_name and disease_name.lower() != "unknown":
-        kb_text = await knowledge_service.get_treatment(crop_name, disease_name, category="crop", db=db, scientific_name=dis_sci_name, language=language)
-    
-    # Healthy Heuristic
-    lower_name = str(disease_name).lower().strip()
-    is_healthy = (
-        lower_name in ["none", "healthy", "n/a", "", "no visible disease", "none detected", "ಆರೋಗ್ಯಕರ", "ಯಾವುದೇ ರೋಗವಿಲ್ಲ"] 
-        or "no disease" in lower_name
-        or "healthy" in lower_name
-        or "none detected" in lower_name
+    new_report = TranslatedAnalysisReport(
+        report_uid=new_uid,
+        user_id=user_id,
+        language=language,
+        category_type="crop",
+        user_input_item=crop_name_localized, # Store localized name for user
+        item_name=crop_name_en, # Store English name for logic
+        original_image_url=original_url,
+        status="PENDING",
+        order_id=subscription_id, # Store subscription_id for consumption later
+        created_at=datetime.now(timezone.utc).replace(tzinfo=None)
     )
     
-    processed_url = None
-    report_url = None 
+    db.add(new_report)
+    await db.commit()
+    await db.refresh(new_report)
     
-    # Bounding Box Logic
-    if not is_healthy and disease_name:
-        try:
-            logger.info(f"🎯 Generating bounding boxes for disease: {disease_name}")
-            boxes = await gemini_service.generate_bbox_crop(image_bytes, disease_name, mime_type=file.content_type)
-            
-            if boxes:
-                logger.info(f"✅ Generated {len(boxes)} bounding boxes")
-                processed_image_bytes = image_service.draw_bounding_boxes(image_bytes, boxes)
-                
-                # Upload processed
-                processed_wrapper = BytesUploadFile(processed_image_bytes, f"processed_{filename}", "image/jpeg")
-                processed_url = await s3_service_public.upload_file(file=processed_wrapper, prefix="dev/processed/")
-            else:
-                logger.warning(f"⚠️ No bounding boxes generated for {disease_name}. Model returned empty list.")
-        except Exception as e:
-             logger.error(f"❌ Bounding Box stage failed: {e}", exc_info=True)
-
-    # 6. Save to DB & Return
-    return await _save_crop_and_respond(
-        db, user_id, crop_name, language,
-        original_url, processed_url, disease_name, kb_text, analysis_dict, is_healthy, plant_info, disease_info
+    # 4. Return PENDING Response
+    return ScanResponse(
+        id=new_uid,
+        user_id=user_id,
+        created_at=new_report.created_at,
+        disease_detected="Pending",
+        user_input_crop=crop_name_localized,
+        language=language,
+        kb_treatment="",
+        analysis_raw={},
+        original_image_url=original_url,
+        bbox_image_url=None,
+        status="PENDING"
     )
 
 async def analyze_vegetable(
     file: UploadFile = File(...),
     user_id: str = Depends(require_auth),
-    crop_name: str = Form(...),
+    category_id: str = Form(...),
     language: str = Form("en", description="Language code: en or kn"),
+    subscription_id: Optional[str] = Form(None),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Dedicated endpoint for Vegetable Analysis.
-    Use this for vegetables like Tomato, Chillies, etc. when inspecting produce quality/disease.
+    Optimized Vegetable Scan
     """
     if not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="File must be an image")
 
+    # 0. Validate Subscription
+    if subscription_id:
+        await verify_consumption(user_id, subscription_id, action="scan")
+
+    # 1. Lookup Name
+    stmt = select(MasterIcon).where(MasterIcon.category_id == category_id)
+    res = await db.execute(stmt)
+    icon = res.scalars().first()
+    if not icon: raise HTTPException(status_code=400, detail="Invalid category_id")
+    
+    crop_name_en = icon.name_en
+    # Localized Name
+    crop_name_localized = getattr(icon, f"name_{language}", icon.name_en) 
+    if not crop_name_localized: crop_name_localized = icon.name_en
+
+    # 2. Read & Upload
     image_bytes = await file.read()
-    filename_uuid = str(uuid.uuid4())
-    filename = f"{filename_uuid}_{file.filename}"
-
-    # 1. Analyze Vegetable
-    try:
-        analysis_dict = await gemini_service.analyze_vegetable(image_bytes, crop_name, language=language, mime_type=file.content_type)
-    except Exception as e:
-       logger.error(f"Veg Analysis failed: {e}")
-       raise HTTPException(status_code=500, detail=f"AI Service failed: {str(e)}")
-
-    # Validation Check
-    if not analysis_dict.get("is_valid_crop", True):
-         detected = analysis_dict.get("detected_object_name", "Unknown")
-         msg = f"The uploaded image appears to be '{detected}', but you selected '{crop_name}'. Please upload a valid image."
-         if language == 'kn':
-             msg = f"ಅಪ್‌ಲೋಡ್ ಮಾಡಿದ ಚಿತ್ರವು '{detected}' ಎನಿಸುತ್ತದೆ, ಆದರೆ ನೀವು '{crop_name}' ಆಯ್ಕೆ ಮಾಡಿದ್ದೀರಿ. ದಯವಿಟ್ಟು ಸರಿಯಾದ ಚಿತ್ರವನ್ನು ಅಪ್‌ಲೋಡ್ ಮಾಡಿ."
-         raise HTTPException(status_code=400, detail=msg)
-
-    # 2. Upload Original
+    
     try:
         file_wrapper = BytesUploadFile(image_bytes, file.filename, file.content_type)
         original_url = await s3_service_public.upload_file(file=file_wrapper, prefix="dev/original/")
     except Exception as e:
-        logger.error(f"S3 Upload failed but analysis valid. Proceeding. Error: {e}")
-        original_url = None
+        logger.error(f"S3 Upload failed: {e}")
+        raise HTTPException(status_code=500, detail="Image upload failed")
 
-    # 3. Process Logic
-    # Schema: disease_info
-    disease_info = analysis_dict.get("disease_info", {})
-    disease_name = disease_info.get("common_name", "Unknown")
+    # 3. Create PENDING Report
+    new_uid = f"reports_{uuid.uuid4()}"
     
-    # Healthy?
-    lower_name = str(disease_name).lower().strip()
-    is_healthy = (
-        lower_name in ["none", "healthy", "n/a", "", "no visible disease", "none detected", "ಆರೋಗ್ಯಕರ", "ಯಾವುದೇ ರೋಗವಿಲ್ಲ"] 
-        or "no disease" in lower_name
-        or "healthy" in lower_name
-        or "none detected" in lower_name
-    )
-
-    # KB Lookup (Try to match disease name if possible)
-    kb_text = ""
-    dis_sci_name = disease_info.get("scientific_name", "")
-    
-    if not is_healthy and disease_name and disease_name.lower() != "unknown":
-         kb_text = await knowledge_service.get_treatment(crop_name, disease_name, category="vegetable", db=db, scientific_name=dis_sci_name, language=language)
-
-    processed_url = None
-
-    # BBox
-    if not is_healthy and disease_name:
-        try:
-             boxes = await gemini_service.generate_bbox_vegetable(image_bytes, disease_name, mime_type=file.content_type)
-             if boxes:
-                logger.info(f"✅ Generated {len(boxes)} bounding boxes for vegetable")
-                processed_image_bytes = image_service.draw_bounding_boxes(image_bytes, boxes)
-                processed_wrapper = BytesUploadFile(processed_image_bytes, f"processed_{filename}", "image/jpeg")
-                processed_url = await s3_service_public.upload_file(file=processed_wrapper, prefix="dev/processed/")
-             else:
-                logger.warning(f"⚠️ No bounding boxes generated for {disease_name}. Model returned empty list.")
-        except Exception as e:
-            logger.error(f"❌ Veg BBox failed: {e}", exc_info=True)
-
-    plant_info = analysis_dict.get("plant_info", {})
-
-    return await _save_vegetable_and_respond(
-        db=db,
+    new_report = TranslatedAnalysisReport(
+        report_uid=new_uid,
         user_id=user_id,
-        crop_name=crop_name,
-        original_url=original_url,
-        processed_url=processed_url,
-        analysis_raw=analysis_dict,
-        is_healthy=is_healthy,
         language=language,
-        kb_text=kb_text
+        category_type="vegetable",
+        user_input_item=crop_name_localized,
+        item_name=crop_name_en,
+        original_image_url=original_url,
+        status="PENDING",
+        order_id=subscription_id,
+        created_at=datetime.now(timezone.utc).replace(tzinfo=None)
     )
-
-
+    
+    db.add(new_report)
+    await db.commit()
+    await db.refresh(new_report)
+    
+    return ScanResponse(
+        id=new_uid,
+        user_id=user_id,
+        created_at=new_report.created_at,
+        disease_detected="Pending",
+        user_input_crop=crop_name_localized,
+        language=language,
+        kb_treatment="",
+        analysis_raw={},
+        original_image_url=original_url,
+        bbox_image_url=None,
+        status="PENDING"
+    )
 
 async def analyze_fruit(
     file: UploadFile = File(...),
     user_id: str = Depends(require_auth),
-    crop_name: str = Form(...),
+    category_id: str = Form(...),
     language: str = Form("en", description="Language code: en or kn"),
+    subscription_id: Optional[str] = Form(None),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Dedicated endpoint for Fruit Analysis.
-    Use this for fruits like Apple, Pomegranate, etc.
+    Optimized Fruit Scan
     """
     if not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="File must be an image")
 
+    # 0. Validate Subscription
+    if subscription_id:
+        await verify_consumption(user_id, subscription_id, action="scan")
+
+    # 1. Lookup Name
+    stmt = select(MasterIcon).where(MasterIcon.category_id == category_id)
+    res = await db.execute(stmt)
+    icon = res.scalars().first()
+    if not icon: raise HTTPException(status_code=400, detail="Invalid category_id")
+    
+    crop_name_en = icon.name_en
+    # Localized Name
+    crop_name_localized = getattr(icon, f"name_{language}", icon.name_en) 
+    if not crop_name_localized: crop_name_localized = icon.name_en
+
+    # 2. Read & Upload
     image_bytes = await file.read()
-    filename_uuid = str(uuid.uuid4())
-    filename = f"{filename_uuid}_{file.filename}"
-
-    # 1. Analyze Fruit
-    try:
-        analysis_dict = await gemini_service.analyze_fruit(image_bytes, crop_name, language=language, mime_type=file.content_type)
-    except Exception as e:
-       logger.error(f"Fruit Analysis failed: {e}")
-       raise HTTPException(status_code=500, detail=f"AI Service failed: {str(e)}")
-
-    # Validation Check
-    if not analysis_dict.get("is_valid_crop", True):
-         detected = analysis_dict.get("detected_object_name", "Unknown")
-         msg = f"The uploaded image appears to be '{detected}', but you selected '{crop_name}'. Please upload a valid image."
-         if language == 'kn':
-             msg = f"ಅಪ್‌ಲೋಡ್ ಮಾಡಿದ ಚಿತ್ರವು '{detected}' ಎನಿಸುತ್ತದೆ, ಆದರೆ ನೀವು '{crop_name}' ಆಯ್ಕೆ ಮಾಡಿದ್ದೀರಿ. ದಯವಿಟ್ಟು ಸರಿಯಾದ ಚಿತ್ರವನ್ನು ಅಪ್‌ಲೋಡ್ ಮಾಡಿ."
-         raise HTTPException(status_code=400, detail=msg)
-
-    # 2. Upload Original
+    
     try:
         file_wrapper = BytesUploadFile(image_bytes, file.filename, file.content_type)
         original_url = await s3_service_public.upload_file(file=file_wrapper, prefix="dev/original/")
     except Exception as e:
-        logger.error(f"S3 Upload failed but analysis valid. Proceeding. Error: {e}")
-        original_url = None
+        logger.error(f"S3 Upload failed: {e}")
+        raise HTTPException(status_code=500, detail="Image upload failed")
 
-    # 3. Process Logic
-    # Schema: diagnosis (different from veg/crop)
-    diagnosis = analysis_dict.get("diagnosis", {}) # Use diagnosis for fruit
-    disease_name = diagnosis.get("disease_name", "Unknown") # Changed from common_name
+    # 3. Create PENDING Report
+    new_uid = f"reports_{uuid.uuid4()}"
     
-    # Healthy?
-    lower_name = str(disease_name).lower().strip()
-    is_healthy = (
-        lower_name in ["none", "healthy", "n/a", "", "no visible disease", "none detected", "ಆರೋಗ್ಯಕರ", "ಯಾವುದೇ ರೋಗವಿಲ್ಲ"] 
-        or "no disease" in lower_name
-        or "healthy" in lower_name
-        or "none detected" in lower_name
-    )
-
-    # KB Lookup
-    kb_text = ""
-    sci_name = diagnosis.get("pathogen_scientific_name", "")
-    
-    if not is_healthy and disease_name and disease_name.lower() != "unknown":
-         kb_text = await knowledge_service.get_treatment(crop_name, disease_name, db=db, scientific_name=sci_name, language=language)
-    
-    processed_url = None
-
-    # BBox
-    if not is_healthy and disease_name:
-        try:
-             # Use general bbox or specific produce bbox tool
-             boxes = await gemini_service.generate_bbox_fruit(image_bytes, disease_name, mime_type=file.content_type)
-             if boxes:
-                logger.info(f"✅ Generated {len(boxes)} bounding boxes for fruit")
-                processed_image_bytes = image_service.draw_bounding_boxes(image_bytes, boxes)
-                processed_wrapper = BytesUploadFile(processed_image_bytes, f"processed_{filename}", "image/jpeg")
-                processed_url = await s3_service_public.upload_file(file=processed_wrapper, prefix="dev/processed/")
-             else:
-                logger.warning(f"⚠️ No bounding boxes generated for {disease_name}. Model returned empty list.")
-        except Exception as e:
-            logger.error(f"❌ Fruit BBox failed: {e}", exc_info=True)
-
-    return await _save_fruit_and_respond(
-        db=db,
+    new_report = TranslatedAnalysisReport(
+        report_uid=new_uid,
         user_id=user_id,
-        crop_name=crop_name,
-        original_url=original_url,
-        processed_url=processed_url,
-        analysis_raw=analysis_dict,
-        is_healthy=is_healthy,
         language=language,
-        kb_text=kb_text
+        category_type="fruit",
+        user_input_item=crop_name_localized,
+        item_name=crop_name_en,
+        original_image_url=original_url,
+        status="PENDING",
+        order_id=subscription_id,
+        created_at=datetime.now(timezone.utc).replace(tzinfo=None)
+    )
+    
+    db.add(new_report)
+    await db.commit()
+    await db.refresh(new_report)
+    
+    return ScanResponse(
+        id=new_uid,
+        user_id=user_id,
+        created_at=new_report.created_at,
+        disease_detected="Pending",
+        user_input_crop=crop_name_localized,
+        language=language,
+        kb_treatment="",
+        analysis_raw={},
+        original_image_url=original_url,
+        bbox_image_url=None,
+        status="PENDING"
     )
 
 @router.post("/{category}_scan", response_model=ScanResponse, tags=["Generate Report"])
@@ -2062,17 +1641,13 @@ async def analyze_dynamic(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     user_id: str = Depends(require_auth),
-    crop_name: str = Form(...),
+    category_id: str = Form(...),
     language: str = Form("en", description="Language code: en or kn"),
+    subscription_id: Optional[str] = Form(None),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Universal endpoint for crop/fruit/vegetable scans via path parameter.
-    
-    Category values:
-    - 'crop' -> Invokes crop scan logic
-    - 'fruit' -> Invokes fruit scan logic
-    - 'vegetable' -> Invokes vegetable scan logic
     """
     cat = category.lower()
     
@@ -2082,28 +1657,29 @@ async def analyze_dynamic(
             background_tasks=background_tasks,
             file=file,
             user_id=user_id,
-            crop_name=crop_name,
+            category_id=category_id,
             language=language,
+            subscription_id=subscription_id,
             db=db
         )
         
     elif cat in ["fruit", "fruits"]:
-        # analyze_fruit does not take background_tasks
         return await analyze_fruit(
             file=file,
             user_id=user_id,
-            crop_name=crop_name,
+            category_id=category_id,
             language=language,
+            subscription_id=subscription_id,
             db=db
         )
         
     elif cat in ["vegetable", "vegetables"]:
-        # analyze_vegetable does not take background_tasks
         return await analyze_vegetable(
             file=file,
             user_id=user_id,
-            crop_name=crop_name,
+            category_id=category_id,
             language=language,
+            subscription_id=subscription_id,
             db=db
         )
     

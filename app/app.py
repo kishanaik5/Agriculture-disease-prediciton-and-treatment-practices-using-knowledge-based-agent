@@ -57,6 +57,51 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Add exception handlers for subscription errors
+from fastapi import Request
+from fastapi.responses import JSONResponse
+from app.exceptions.subscription import (
+    SubscriptionLimitExceeded,
+    SubscriptionInvalid,
+    SubscriptionServiceUnavailable
+)
+
+@app.exception_handler(SubscriptionLimitExceeded)
+async def subscription_limit_exceeded_handler(request: Request, exc: SubscriptionLimitExceeded):
+    """Handle subscription quota exceeded errors"""
+    return JSONResponse(
+        status_code=402,  # Payment Required
+        content={
+            "error": "subscription_limit_exceeded",
+            "message": "You have reached your subscription limit. Please upgrade your plan or wait for the next billing cycle.",
+            "details": str(exc) if str(exc) else None
+        }
+    )
+
+@app.exception_handler(SubscriptionInvalid)
+async def subscription_invalid_handler(request: Request, exc: SubscriptionInvalid):
+    """Handle invalid subscription errors"""
+    return JSONResponse(
+        status_code=404,  # Not Found
+        content={
+            "error": "subscription_not_found",
+            "message": "Subscription not found or has expired. Please check your subscription status.",
+            "details": str(exc) if str(exc) else None
+        }
+    )
+
+@app.exception_handler(SubscriptionServiceUnavailable)
+async def subscription_service_unavailable_handler(request: Request, exc: SubscriptionServiceUnavailable):
+    """Handle subscription service unavailability"""
+    return JSONResponse(
+        status_code=503,  # Service Unavailable
+        content={
+            "error": "subscription_service_unavailable",
+            "message": "Subscription service is temporarily unavailable. Please try again later.",
+            "details": str(exc) if str(exc) else None
+        }
+    )
+
 # ⚠️ TEMPORARY: Debug middleware to diagnose prod auth issues
 # Remove this once auth is working correctly
 from app.middlewares.auth_debug import AuthDebugMiddleware
@@ -91,7 +136,14 @@ async def wait_for_db(engine, max_retries: int = 10):
                 await conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {settings.DB_SCHEMA}"))
                 print(f"✅ Schema '{settings.DB_SCHEMA}' ensured")
                 
-                # Now create all tables in the schema
+                # CRITICAL: Set search_path BEFORE creating tables
+                # This ensures ALL tables (including SharedBackend's entities) 
+                # are created in kissan_cv schema, not public
+                await conn.execute(text(f"SET search_path TO {settings.DB_SCHEMA}, public"))
+                # Note: No commit needed - the begin() context auto-commits on exit
+                print(f"✅ Search path set to {settings.DB_SCHEMA}")
+                
+                # Now create all tables in the kissan_cv schema
                 await conn.run_sync(BaseSchema.metadata.create_all)
                 print(f"✅ Tables created in schema '{settings.DB_SCHEMA}'")
             

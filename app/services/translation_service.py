@@ -139,4 +139,15 @@ class TranslationService:
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def translate_dictionary(self, data: dict, target_lang: str) -> dict:
+        """
+        Translates a dictionary of content (Analysis + KB) directly.
+        Returns the translated dictionary.
+        """
+        try:
+            return await gemini_service.translate_report_content(data, target_lang)
+        except Exception as e:
+            logger.error(f"Dictionary translation failed: {e}")
+            raise HTTPException(status_code=500, detail=f"Translation failed: {e}")
+
 translation_service = TranslationService()
