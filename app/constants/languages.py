@@ -6,12 +6,12 @@ Supported languages configuration for the Kisaan CV Service.
 SUPPORTED_LANGUAGES = {
     'en': 'English',
     'kn': 'Kannada',
-    'hn': 'Hindi',
+    'hi': 'Hindi',  # Changed from 'hn' to standard ISO 639-1 code
     'ta': 'Tamil',
     'te': 'Telugu',
     'ml': 'Malayalam',
     'mr': 'Marathi',
-    'gu': 'Gu jarati',
+    'gu': 'Gujarati',
     'bn': 'Bengali',
     'or': 'Odia'
 }

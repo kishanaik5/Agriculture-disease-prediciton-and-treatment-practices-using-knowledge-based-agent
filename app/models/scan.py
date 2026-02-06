@@ -121,6 +121,8 @@ class TranslatedAnalysisReport(BaseSchema):
     # category = Column(String(20), nullable=False) # Rename to category_type per request
     item_name = Column(String(255), nullable=True)
     
+    user_input_item = Column(String(255), nullable=True) # Normalized user input (e.g. crop name)
+
     disease_name = Column(String(255), nullable=True)
     scientific_name = Column(String(255), nullable=True)
     
@@ -170,7 +172,7 @@ class MasterIcon(BaseSchema):
     # Multi-language names
     name_en = Column(String(255), nullable=True)  # English
     name_kn = Column(String(255), nullable=True)  # Kannada
-    name_hn = Column(String(255), nullable=True)  # Hindi
+    name_hi = Column(String(255), nullable=True)  # Hindi (ISO 639-1: hi)
     name_ta = Column(String(255), nullable=True)  # Tamil
     name_te = Column(String(255), nullable=True)  # Telugu
     name_ml = Column(String(255), nullable=True)  # Malayalam
